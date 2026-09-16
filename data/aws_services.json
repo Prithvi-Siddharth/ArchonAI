@@ -1,0 +1,210 @@
+[
+  {
+    "name": "Amazon Route 53",
+    "category": "Networking",
+    "description": "Highly available and scalable DNS web service with health checking and traffic routing policies.",
+    "common_use_cases": ["DNS resolution", "latency-based routing", "failover routing", "geo-routing"],
+    "strengths": ["100% SLA availability", "health-check-based failover", "global anycast network"],
+    "limitations": ["not a substitute for a CDN or load balancer", "DNS caching can delay failover propagation"]
+  },
+  {
+    "name": "Amazon CloudFront",
+    "category": "Networking",
+    "description": "Global content delivery network (CDN) that caches content at edge locations close to users.",
+    "common_use_cases": ["static asset delivery", "video streaming", "API acceleration", "DDoS absorption at the edge"],
+    "strengths": ["low-latency global delivery", "integrates with WAF and Shield", "reduces origin load"],
+    "limitations": ["cache invalidation adds operational overhead", "not useful for highly dynamic, non-cacheable content"]
+  },
+  {
+    "name": "Amazon API Gateway",
+    "category": "Networking",
+    "description": "Managed service for creating, publishing, and securing REST, HTTP, and WebSocket APIs at scale.",
+    "common_use_cases": ["serverless API front doors", "request throttling", "API key management", "Lambda integration"],
+    "strengths": ["built-in throttling and auth", "scales automatically", "pay-per-request pricing"],
+    "limitations": ["added latency vs direct ALB", "cost can grow at very high request volumes"]
+  },
+  {
+    "name": "Application Load Balancer",
+    "category": "Networking",
+    "description": "Layer 7 load balancer that routes HTTP/HTTPS traffic across multiple targets and supports path/host-based rules.",
+    "common_use_cases": ["distributing traffic across containers or EC2", "microservices routing", "blue/green deployments"],
+    "strengths": ["content-based routing", "native health checks", "integrates with ECS/EKS/EC2 auto scaling"],
+    "limitations": ["layer 7 only (no raw TCP/UDP)", "regional, not global, without CloudFront in front"]
+  },
+  {
+    "name": "Amazon ECS",
+    "category": "Compute",
+    "description": "Fully managed container orchestration service, usable with the serverless Fargate launch type or self-managed EC2.",
+    "common_use_cases": ["containerized microservices", "batch processing", "long-running APIs"],
+    "strengths": ["simpler operational model than Kubernetes", "tight AWS integration", "Fargate removes server management"],
+    "limitations": ["less portable than Kubernetes", "fewer third-party ecosystem tools than EKS"]
+  },
+  {
+    "name": "Amazon EKS",
+    "category": "Compute",
+    "description": "Managed Kubernetes control plane for running containerized workloads with the full Kubernetes ecosystem.",
+    "common_use_cases": ["teams standardizing on Kubernetes", "multi-cloud portability", "complex orchestration needs"],
+    "strengths": ["Kubernetes-native tooling and portability", "large ecosystem", "fine-grained scheduling control"],
+    "limitations": ["higher operational complexity than ECS", "steeper learning curve", "control plane cost"]
+  },
+  {
+    "name": "AWS Lambda",
+    "category": "Compute",
+    "description": "Serverless compute that runs code in response to events without provisioning or managing servers.",
+    "common_use_cases": ["event-driven processing", "lightweight APIs", "cron-style jobs", "stream processing"],
+    "strengths": ["scales to zero", "no server management", "pay only for execution time"],
+    "limitations": ["execution time limits", "cold starts", "not ideal for long-running or stateful workloads"]
+  },
+  {
+    "name": "Amazon EC2",
+    "category": "Compute",
+    "description": "Resizable virtual machines with full control over the operating system and runtime.",
+    "common_use_cases": ["custom runtime requirements", "legacy application migration", "specialized workloads (GPU, HPC)"],
+    "strengths": ["maximum flexibility and control", "wide instance-type selection", "predictable performance"],
+    "limitations": ["requires patching and OS management", "manual scaling setup via Auto Scaling Groups"]
+  },
+  {
+    "name": "Amazon RDS",
+    "category": "Database",
+    "description": "Managed relational database service supporting engines like PostgreSQL, MySQL, and SQL Server.",
+    "common_use_cases": ["transactional applications", "structured relational data", "applications needing SQL and joins"],
+    "strengths": ["automated backups and patching", "multi-AZ failover", "read replicas for scaling reads"],
+    "limitations": ["vertical scaling limits for writes", "cross-region replication adds latency"]
+  },
+  {
+    "name": "Amazon Aurora",
+    "category": "Database",
+    "description": "AWS-built MySQL/PostgreSQL-compatible relational database with distributed, self-healing storage.",
+    "common_use_cases": ["high-throughput transactional workloads", "SaaS platforms needing relational scale", "global applications via Aurora Global Database"],
+    "strengths": ["up to 15 low-latency read replicas", "faster failover than standard RDS", "storage auto-scales"],
+    "limitations": ["higher cost than standard RDS", "still bound by relational write-scaling limits"]
+  },
+  {
+    "name": "Amazon DynamoDB",
+    "category": "Database",
+    "description": "Fully managed, serverless key-value and document NoSQL database with single-digit millisecond latency.",
+    "common_use_cases": ["high-scale key-value access patterns", "session stores", "shopping carts", "IoT data"],
+    "strengths": ["virtually unlimited horizontal scale", "no server management", "predictable low latency"],
+    "limitations": ["limited query flexibility vs SQL", "requires careful key/partition design", "complex multi-item transactions"]
+  },
+  {
+    "name": "Amazon ElastiCache",
+    "category": "Caching",
+    "description": "Managed in-memory caching service supporting Redis and Memcached.",
+    "common_use_cases": ["session caching", "database query result caching", "leaderboards and rate limiting (Redis)"],
+    "strengths": ["sub-millisecond latency", "reduces database load", "Redis supports rich data structures"],
+    "limitations": ["cache invalidation complexity", "additional infrastructure to manage and monitor"]
+  },
+  {
+    "name": "Amazon S3",
+    "category": "Storage",
+    "description": "Durable, highly available object storage for any amount of data.",
+    "common_use_cases": ["static assets and media", "data lakes", "backups", "user-uploaded content"],
+    "strengths": ["11 nines durability", "virtually unlimited scale", "integrates with CloudFront and Lambda"],
+    "limitations": ["not a file system (object storage semantics)", "eventual consistency considerations for some access patterns"]
+  },
+  {
+    "name": "Amazon SQS",
+    "category": "Messaging",
+    "description": "Fully managed message queuing service for decoupling and scaling microservices.",
+    "common_use_cases": ["asynchronous task processing", "buffering spiky workloads", "decoupling producer/consumer services"],
+    "strengths": ["nearly unlimited throughput", "at-least-once delivery", "dead-letter queue support"],
+    "limitations": ["no native pub/sub fan-out (needs SNS)", "message ordering requires FIFO queues with lower throughput"]
+  },
+  {
+    "name": "Amazon SNS",
+    "category": "Messaging",
+    "description": "Fully managed pub/sub messaging service for fanning out notifications to multiple subscribers.",
+    "common_use_cases": ["fan-out to multiple SQS queues", "push notifications", "system alerts"],
+    "strengths": ["simple pub/sub fan-out", "integrates with SQS, Lambda, email, SMS"],
+    "limitations": ["no message retention/replay on its own", "not designed for complex event routing rules"]
+  },
+  {
+    "name": "Amazon EventBridge",
+    "category": "Messaging",
+    "description": "Serverless event bus for building event-driven architectures with content-based routing rules.",
+    "common_use_cases": ["decoupled event-driven microservices", "SaaS integrations", "scheduled rules"],
+    "strengths": ["rich content-based filtering", "schema registry", "wide native AWS service integration"],
+    "limitations": ["not designed for very high-throughput streaming (use Kinesis)", "at-least-once delivery semantics"]
+  },
+  {
+    "name": "Amazon VPC",
+    "category": "Networking",
+    "description": "Isolated virtual network within AWS for launching resources with full control over IP ranges, subnets, and routing.",
+    "common_use_cases": ["network isolation", "public/private subnet segmentation", "hybrid connectivity"],
+    "strengths": ["full network isolation and control", "supports fine-grained security groups and NACLs"],
+    "limitations": ["misconfiguration can expose resources publicly", "adds design complexity vs default networking"]
+  },
+  {
+    "name": "AWS IAM",
+    "category": "Security",
+    "description": "Identity and access management service for controlling authentication and authorization to AWS resources.",
+    "common_use_cases": ["least-privilege service roles", "cross-account access", "federated identity"],
+    "strengths": ["fine-grained policy control", "no additional cost", "deeply integrated across all AWS services"],
+    "limitations": ["overly permissive policies are a common misconfiguration risk", "policy complexity at scale"]
+  },
+  {
+    "name": "AWS WAF",
+    "category": "Security",
+    "description": "Web application firewall that protects APIs and web apps from common exploits at the edge (with CloudFront/ALB).",
+    "common_use_cases": ["blocking SQL injection and XSS", "rate limiting abusive clients", "geo-blocking"],
+    "strengths": ["managed rule groups for OWASP Top 10", "integrates with CloudFront, ALB, API Gateway"],
+    "limitations": ["requires rule tuning to avoid false positives", "does not protect against all application-logic flaws"]
+  },
+  {
+    "name": "Amazon CloudWatch",
+    "category": "Observability",
+    "description": "Monitoring and observability service for metrics, logs, alarms, and dashboards.",
+    "common_use_cases": ["application and infrastructure metrics", "log aggregation", "alarm-driven auto scaling and alerting"],
+    "strengths": ["native integration with every AWS service", "supports custom metrics and alarms"],
+    "limitations": ["log storage costs grow quickly at scale", "less rich querying than dedicated observability platforms"]
+  },
+  {
+    "name": "AWS Secrets Manager",
+    "category": "Security",
+    "description": "Managed service for storing, rotating, and retrieving secrets such as database credentials and API keys.",
+    "common_use_cases": ["database credential storage", "automatic secret rotation", "third-party API key storage"],
+    "strengths": ["automatic rotation", "fine-grained IAM access control", "audit trail via CloudTrail"],
+    "limitations": ["per-secret cost at scale", "requires application-level integration to fetch secrets"]
+  },
+  {
+    "name": "AWS KMS",
+    "category": "Security",
+    "description": "Managed service for creating and controlling encryption keys used to encrypt data across AWS services.",
+    "common_use_cases": ["encryption at rest for S3/RDS/EBS", "envelope encryption", "key rotation policies"],
+    "strengths": ["centralized key management", "tight IAM integration", "supports customer-managed keys"],
+    "limitations": ["API request cost at very high volume", "key policy misconfiguration can lock out access"]
+  },
+  {
+    "name": "AWS Auto Scaling",
+    "category": "Compute",
+    "description": "Automatically adjusts compute capacity (EC2, ECS) based on demand or schedules.",
+    "common_use_cases": ["handling traffic spikes", "cost optimization by scaling down off-peak", "maintaining target utilization"],
+    "strengths": ["responds automatically to load", "supports scheduled and predictive scaling"],
+    "limitations": ["scaling lag during sudden spikes", "requires stateless, horizontally scalable workloads"]
+  },
+  {
+    "name": "AWS Backup",
+    "category": "Reliability",
+    "description": "Centralized backup service for automating and managing backups across AWS services.",
+    "common_use_cases": ["scheduled RDS/EBS/DynamoDB backups", "cross-region backup copies", "compliance retention policies"],
+    "strengths": ["centralized policy management", "cross-region and cross-account backup copies"],
+    "limitations": ["storage cost for long retention", "restore time varies by data volume"]
+  },
+  {
+    "name": "AWS X-Ray",
+    "category": "Observability",
+    "description": "Distributed tracing service for analyzing and debugging requests across microservices.",
+    "common_use_cases": ["latency bottleneck analysis", "distributed request tracing", "service map visualization"],
+    "strengths": ["end-to-end trace visibility", "identifies slow downstream dependencies"],
+    "limitations": ["requires instrumentation in application code", "sampling can miss rare edge cases"]
+  },
+  {
+    "name": "AWS Shield",
+    "category": "Security",
+    "description": "Managed DDoS protection service, with a Standard tier free for all customers and an Advanced tier for enhanced protection.",
+    "common_use_cases": ["protecting internet-facing endpoints from DDoS", "safeguarding CloudFront/ALB/Route 53 resources"],
+    "strengths": ["automatic mitigation of common network-layer attacks", "Advanced tier includes cost protection and 24/7 DRT support"],
+    "limitations": ["Advanced tier has significant fixed cost", "does not replace application-layer security controls"]
+  }
+]
