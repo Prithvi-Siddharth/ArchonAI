@@ -1,0 +1,26 @@
+[
+  {
+    "label": "E-commerce platform",
+    "prompt": "Design an e-commerce platform that supports 500,000 concurrent users, requires high availability, low latency, secure payment processing, and must scale during traffic spikes."
+  },
+  {
+    "label": "Video streaming platform",
+    "prompt": "Design a video streaming platform serving 2 million daily active users, needing 4K adaptive bitrate streaming, low-latency global content delivery, and resilient storage for large media files."
+  },
+  {
+    "label": "Real-time ride-sharing platform",
+    "prompt": "Design a real-time ride-sharing platform that matches drivers and riders within 5 seconds, tracks live GPS location for 200,000 concurrent trips, and requires high availability across multiple regions."
+  },
+  {
+    "label": "Banking transaction system",
+    "prompt": "Design a banking transaction system that processes 10,000 transactions per second, requires strong consistency, end-to-end encryption, regulatory compliance (PCI-DSS and SOC 2), and zero data loss during failures."
+  },
+  {
+    "label": "Social media platform",
+    "prompt": "Design a social media platform supporting 5 million monthly active users with a personalized news feed, real-time notifications, photo and video uploads, and the ability to handle viral traffic spikes."
+  },
+  {
+    "label": "AI inference platform",
+    "prompt": "Design an AI inference platform serving machine learning models to 100,000 requests per minute with low-latency GPU-backed inference, autoscaling based on demand, and support for multiple model versions."
+  }
+]
