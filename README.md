@@ -204,23 +204,73 @@ strengths, and limitations. The Architecture Designer is explicitly instructed n
 every available service — only what the specific requirements justify — and must give a
 concrete reason for each one it picks.
 
-## Streamlit UI
+## REST API
 
-[app.py](app.py) is presentation-only; all design/analysis/critique logic lives in `agents/`
-and `graph/`. It streams the graph's execution via `graph.stream(..., stream_mode="updates")`
-so the UI shows each agent completing in real time (inside a `st.status(...)` live log),
-including explicit "⚠ requires revision" / "↻ Revising" / re-review messages when the
-critic/revision loop actually fires. Once finished, it renders the architecture overview, AWS
-service table, a native Graphviz architecture diagram (with the underlying Mermaid source also
-shown, since Streamlit has no first-party Mermaid renderer), data flow, scalability, security,
-reliability, cost, trade-offs, bottlenecks, final recommendations, and a fully expandable
-LangGraph execution trace.
+ArchonAI is served as a **FastAPI** application ([api/main.py](api/main.py)). The API layer is
+deliberately thin: it validates the request, calls the existing `run_workflow()` from
+[graph/workflow.py](graph/workflow.py) unchanged, and serializes the result. All
+design/analysis/critique logic stays in `agents/` and `graph/`.
+
+Interactive docs are available at **http://localhost:8000/docs** once the server is running.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness check. Does not call the LLM. |
+| `GET` | `/api/v1/architectures/examples` | Example prompts (stored in [data/example_prompts.json](data/example_prompts.json)). |
+| `POST` | `/api/v1/architectures` | Runs the full multi-agent workflow and returns the result. |
+
+### Example requests
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok"}
+
+curl http://localhost:8000/api/v1/architectures/examples
+
+curl -X POST http://localhost:8000/api/v1/architectures \
+  -H "Content-Type: application/json" \
+  -d '{"user_request": "Design a blogging platform for 10,000 users"}' \
+  --max-time 900
+```
+
+`POST /api/v1/architectures` is **synchronous** -- the request stays open until the whole
+workflow finishes, which typically takes a few minutes (longer if Groq rate limits trigger
+backoff). Use a generous client timeout.
+
+**Request body:** `{"user_request": "<10-4000 characters>"}`. Surrounding whitespace is
+trimmed; blank, too-short, or too-long input is rejected with `422` before any LLM call.
+
+**Response (`200`):** the full run result -- `approved`, `max_revisions_reached`,
+`revision_count`, `requirements`, `architecture_plan`, `architecture` (services + data flow),
+the five specialist analyses, `cost_analysis`, `validation_results`, `critic_review`,
+`final_report`, and the `execution_trace`. These reuse the Pydantic models in
+[models/schemas.py](models/schemas.py).
+
+**Errors** return `{"detail": "<message>"}` with a generic, client-safe message. Full
+exception details are logged server-side only and never returned to the client.
+
+| Status | When |
+|--------|------|
+| `422` | Invalid request body |
+| `429` | Groq rate limit still exceeded after automatic retries |
+| `500` | Unexpected internal error |
+| `502` | LLM provider error or invalid structured output |
+| `503` | `GROQ_API_KEY` is not configured |
+| `504` | LLM provider timed out |
+
+Note that if only the critic, revision, or report LLM call fails, the workflow's existing
+fallbacks still complete the run, so the API returns `200` -- check `approved` and the
+`execution_trace` to see what happened.
 
 ## Project Structure
 
 ```
 archonai/
-├── app.py                       # Streamlit UI (presentation only)
+├── api/                         # FastAPI layer (thin: validate, run workflow, serialize)
+│   ├── main.py                  # App entry point + /health
+│   ├── routes/architectures.py  # /api/v1/architectures endpoints + error mapping
+│   ├── schemas.py               # Request/response models
+│   └── examples.py              # Loads data/example_prompts.json
 ├── agents/                      # One module per graph node's LLM logic
 │   ├── llm.py                   # Modular LLM provider layer (Groq today, Bedrock-ready)
 │   ├── requirements.py / planner.py / architecture.py
@@ -235,7 +285,9 @@ archonai/
 │   ├── architecture_validator.py
 │   └── cost_estimator.py
 ├── models/schemas.py             # All Pydantic structured-output schemas
-├── data/aws_services.json        # AWS service knowledge base
+├── data/
+│   ├── aws_services.json         # AWS service knowledge base
+│   └── example_prompts.json      # Example prompts served by the API
 └── tests/                        # pytest suite, LLM calls mocked
 ```
 
@@ -269,10 +321,10 @@ python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env               # then edit .env with your real GROQ_API_KEY
-streamlit run app.py
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open the URL Streamlit prints (typically http://localhost:8501).
+Open http://localhost:8000/docs to try the endpoints in your browser.
 
 ### Run the Tests
 
@@ -282,17 +334,19 @@ pytest -v
 
 The entire test suite mocks the LLM layer (`agents.llm.get_llm` / `invoke_structured`), so it
 runs with no API key and no network access, including full end-to-end graph runs that exercise
-the critic/revision loop and the max-revision cutoff.
+the critic/revision loop and the max-revision cutoff. `tests/test_api.py` drives the same
+mocked workflow through the HTTP API with FastAPI's `TestClient`, covering validation, JSON
+serialization, and the error-to-status-code mapping.
 
 ### Docker
 
 ```bash
 docker build -t archonai .
-docker run -p 8501:8501 --env-file .env archonai
+docker run -p 8000:8000 --env-file .env archonai
 ```
 
-The container runs `streamlit run app.py --server.address=0.0.0.0 --server.port=8501` and
-exposes port 8501.
+The container runs `uvicorn api.main:app --host 0.0.0.0 --port 8000` and exposes port 8000.
+Docker is optional -- for local development, the `uvicorn` command above is all you need.
 
 ## Example Prompts
 
@@ -305,8 +359,8 @@ exposes port 8501.
   minute with low-latency GPU-backed inference, autoscaling based on demand, and support for
   multiple model versions."*
 
-Four more (video streaming, ride-sharing, social media) are built into the UI as one-click
-example buttons.
+All six example prompts (including video streaming, ride-sharing, and social media) are
+available from `GET /api/v1/architectures/examples`.
 
 ## Limitations
 
@@ -320,8 +374,14 @@ example buttons.
   set of known anti-patterns the LLM might rubber-stamp past, but it isn't exhaustive.
 - **Single-cloud, AWS-only** by design, to keep the service knowledge base and reasoning
   tractable and explainable.
-- **No persistence** — each run is stateless; closing the browser loses the result unless
-  you've copied it out (there's no checkpointer configured).
+- **No persistence** — each run is stateless; results are returned in the response and not
+  stored anywhere (there's no database or checkpointer configured).
+- **Synchronous API** — `POST /api/v1/architectures` holds the HTTP connection open for the
+  whole run (typically a few minutes). There is no background job queue or progress
+  streaming yet.
+- **No frontend yet** — the previous Streamlit UI has been removed. Use `/docs` or any HTTP
+  client. The Graphviz/Mermaid diagrams it drew are no longer generated; a frontend can
+  rebuild them from `architecture.data_flow`.
 - **Free-tier Groq accounts have both a tokens-per-minute and a tokens-per-day limit**, each
   enforced per model. The graph's parallel fan-out (two agents at a time, three times per run)
   is deliberately kept small to reduce how often a burst trips the per-minute ceiling, and
@@ -334,6 +394,10 @@ example buttons.
 - Add Amazon Bedrock as a second LLM provider (the `agents/llm.py` layer is already factored
   to make this a single new branch, not a rewrite).
 - Add a LangGraph checkpointer for persistence and resumable runs.
+- Build a web frontend on top of the REST API.
+- Add a streaming endpoint for live per-agent progress (`stream_workflow_updates()` in
+  `graph/workflow.py` already yields node-by-node updates).
+- Cache completed design results so repeated requests don't re-run the LLM workflow.
 - Export the final report as PDF/Markdown.
 - Add multi-cloud service knowledge bases (Azure, GCP) behind the same tool interface.
 - Let a human reviewer inject their own required changes into the revision loop alongside the

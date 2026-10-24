@@ -231,12 +231,14 @@ def run_workflow(user_request: str) -> ArchonState:
 
 def stream_workflow_updates(user_request: str):
     """Run the graph while yielding (node_name, partial_state) as each node
-    completes, so a caller (the Streamlit UI) can render live progress
-    instead of blocking silently until the whole run finishes.
+    completes, so a caller can render live progress instead of blocking
+    silently until the whole run finishes. (Not currently used by the REST
+    API, which calls run_workflow; kept for a future streaming endpoint.)
 
     Each yielded partial_state is exactly what that node returned -- the
     caller is responsible for merging it into a running accumulated state
-    (see app.py), mirroring how LangGraph's own reducers merge state.
+    (execution_trace concatenated, every other key overwritten), mirroring
+    how LangGraph's own reducers merge state.
     """
     if not user_request or not user_request.strip():
         raise WorkflowError("Please describe the system you want to build before running ArchonAI.")
