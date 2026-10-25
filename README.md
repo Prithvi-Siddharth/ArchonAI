@@ -217,7 +217,12 @@ Interactive docs are available at **http://localhost:8000/docs** once the server
 |--------|------|-------------|
 | `GET` | `/health` | Liveness check. Does not call the LLM. |
 | `GET` | `/api/v1/architectures/examples` | Example prompts (stored in [data/example_prompts.json](data/example_prompts.json)). |
-| `POST` | `/api/v1/architectures` | Runs the full multi-agent workflow and returns the result. |
+| `POST` | `/api/v1/architectures` | Runs the full multi-agent workflow and returns the result (synchronous). |
+| `POST` | `/api/v1/architectures/jobs` | Queues a design request and returns a `job_id` immediately (`202`). |
+| `GET` | `/api/v1/architectures/jobs/{job_id}` | Job status, plus the full result once it has succeeded. |
+
+For anything beyond a quick test, prefer the **job endpoints** (see
+[Background Jobs](#background-jobs) below): they don't hold a connection open for minutes.
 
 ### Example requests
 
@@ -262,15 +267,97 @@ Note that if only the critic, revision, or report LLM call fails, the workflow's
 fallbacks still complete the run, so the API returns `200` -- check `approved` and the
 `execution_trace` to see what happened.
 
+## Background Jobs
+
+A design run takes minutes, so the job endpoints run it in the background instead of inside
+the HTTP request:
+
+```
+POST /jobs ──► MySQL (job saved as queued) ──► Redis queue ──► Celery worker
+                                                                   │
+GET /jobs/{id} ◄── MySQL (status + result) ◄── run_workflow() ◄────┘
+```
+
+1. `POST /api/v1/architectures/jobs` stores the job in **MySQL**, sends its id to **Redis**,
+   and returns `202` with a `job_id` straight away.
+2. A **Celery worker** ([jobs/tasks.py](jobs/tasks.py)) picks it up and runs the same
+   `run_workflow()` -- via [jobs/runner.py](jobs/runner.py) -- then stores the result (or a
+   client-safe error) in MySQL.
+3. `GET /api/v1/architectures/jobs/{job_id}` reads the job from MySQL. Poll it until the
+   status is `succeeded` or `failed`.
+
+**Job statuses:** `queued → running → succeeded | failed`. Every change is a guarded database
+update ([jobs/repository.py](jobs/repository.py)), so a job can't run twice or change after
+it has finished.
+
+**Reliability** (configured in [jobs/celery_app.py](jobs/celery_app.py)):
+- **Retries** -- temporary failures (Groq rate limit, timeout, network error) put the job back
+  to `queued` and retry after `JOB_RETRY_DELAY_SECONDS`, up to `JOB_MAX_RETRIES` times.
+  Permanent failures (missing key, invalid model output) fail immediately.
+- **Time limit** -- a job running longer than `JOB_TIMEOUT_SECONDS` is stopped and marked
+  `failed` with `504`.
+- **Crash recovery** -- jobs are acknowledged to Redis only after they finish, so if a worker
+  dies mid-run the job is handed back and run again (within the retry limit).
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/architectures/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"user_request": "Design a blogging platform for 10,000 users"}'
+# {"job_id":"3f2a…","status":"queued","status_url":"/api/v1/architectures/jobs/3f2a…"}
+
+curl http://localhost:8000/api/v1/architectures/jobs/3f2a…
+# {"job_id":"3f2a…","status":"running","attempts":1,…,"result":null}
+# … later: "status":"succeeded" with the full "result"
+```
+
+| Status | When |
+|--------|------|
+| `202` | Job accepted |
+| `404` | Unknown `job_id` |
+| `422` | Invalid request body |
+| `503` | MySQL (job store) or Redis (job queue) unavailable |
+
+A failed job is still a `200` on `GET` -- its `error` field holds the status code and message
+(e.g. `429`, `502`, `503`, `504`) using the same rules as the synchronous endpoint.
+
+### Job settings
+
+All optional; the defaults match the docker-compose setup (see [.env.example](.env.example)).
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `DATABASE_URL` | `mysql+pymysql://archon:archon@localhost:3306/archonai` | Job store |
+| `REDIS_URL` | `redis://localhost:6379/0` | Job queue |
+| `WORKER_CONCURRENCY` | `1` | Jobs a worker runs at once |
+| `JOB_MAX_RETRIES` | `1` | Retries after a temporary failure |
+| `JOB_RETRY_DELAY_SECONDS` | `60` | Wait before a retry |
+| `JOB_TIMEOUT_SECONDS` | `900` | Time limit per job |
+
+**Worker concurrency:** keep it at `1` on a Groq free-tier key. Each run already makes several
+LLM calls in parallel, so the Groq rate limit -- not CPU -- is the bottleneck; more concurrent
+jobs mostly means more `429`s. To change it, set `WORKER_CONCURRENCY` in `.env` and restart the
+worker (or pass `--concurrency=N` when starting it locally). Raise it only while measured
+jobs-per-hour keeps improving.
+
 ## Project Structure
 
 ```
 archonai/
 ├── api/                         # FastAPI layer (thin: validate, run workflow, serialize)
 │   ├── main.py                  # App entry point + /health
-│   ├── routes/architectures.py  # /api/v1/architectures endpoints + error mapping
+│   ├── routes/architectures.py  # /api/v1/architectures endpoints (sync + jobs)
+│   ├── errors.py                # Shared failure -> status code/message rules
 │   ├── schemas.py               # Request/response models
 │   └── examples.py              # Loads data/example_prompts.json
+├── jobs/                        # Background job system (shared by API and worker)
+│   ├── config.py                # Job settings from the environment
+│   ├── db.py / models.py        # MySQL connection + architecture_jobs table
+│   ├── repository.py            # Create/read jobs, guarded status changes
+│   ├── runner.py                # execute_job(): run the workflow, store the outcome
+│   ├── celery_app.py            # Celery app (Redis broker, retries, time limits)
+│   └── tasks.py                 # Celery task wrapping execute_job()
 ├── agents/                      # One module per graph node's LLM logic
 │   ├── llm.py                   # Modular LLM provider layer (Groq today, Bedrock-ready)
 │   ├── requirements.py / planner.py / architecture.py
@@ -288,7 +375,9 @@ archonai/
 ├── data/
 │   ├── aws_services.json         # AWS service knowledge base
 │   └── example_prompts.json      # Example prompts served by the API
-└── tests/                        # pytest suite, LLM calls mocked
+├── tests/                        # pytest suite, LLM calls mocked
+├── Dockerfile                    # Image used by both the api and worker services
+└── docker-compose.yml            # mysql, redis, api, worker
 ```
 
 ## Setup
@@ -297,6 +386,8 @@ archonai/
 
 - Python 3.11+
 - A [Groq API key](https://console.groq.com/keys) (free tier available)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) -- for MySQL and Redis
+  (needed by the job endpoints), or to run everything in containers
 
 ### Environment Variables
 
@@ -314,17 +405,49 @@ cp .env.example .env
 `.env` is git-ignored — never commit real credentials. `.env.example` contains placeholders
 only.
 
-### Install & Run Locally
+### Option A: Run everything with Docker (one command)
+
+```bash
+cp .env.example .env               # then edit .env with your real GROQ_API_KEY
+docker compose up -d --build       # starts mysql, redis, api, worker
+docker compose ps                  # all four should be up (api/mysql/redis "healthy")
+```
+
+Open http://localhost:8000/docs. Useful commands:
+
+```bash
+docker compose logs -f worker      # watch jobs being processed
+docker compose restart worker      # e.g. after changing WORKER_CONCURRENCY in .env
+docker compose up -d --build       # rebuild after code changes
+docker compose down                # stop everything (MySQL data is kept)
+docker compose down -v             # stop and DELETE all stored jobs
+```
+
+### Option B: Local development (code changes reload quickly)
+
+Run only MySQL and Redis in Docker, and the API and worker from your virtualenv:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env               # then edit .env with your real GROQ_API_KEY
+
+docker compose up -d mysql redis
+
+# terminal 1 -- the API (auto-reloads on code changes)
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+
+# terminal 2 -- the worker (restart it manually after code changes)
+celery -A jobs.celery_app worker --loglevel=info
 ```
 
-Open http://localhost:8000/docs to try the endpoints in your browser.
+Use **one option at a time**: if the Docker `api`/`worker` containers are running, stop them
+(`docker compose stop api worker`) before starting uvicorn/celery locally, or port 8000 will
+clash and two workers will share the queue.
+
+`/health` and the synchronous `POST /api/v1/architectures` work without MySQL or Redis; only the
+job endpoints need them.
 
 ### Run the Tests
 
@@ -336,17 +459,10 @@ The entire test suite mocks the LLM layer (`agents.llm.get_llm` / `invoke_struct
 runs with no API key and no network access, including full end-to-end graph runs that exercise
 the critic/revision loop and the max-revision cutoff. `tests/test_api.py` drives the same
 mocked workflow through the HTTP API with FastAPI's `TestClient`, covering validation, JSON
-serialization, and the error-to-status-code mapping.
-
-### Docker
-
-```bash
-docker build -t archonai .
-docker run -p 8000:8000 --env-file .env archonai
-```
-
-The container runs `uvicorn api.main:app --host 0.0.0.0 --port 8000` and exposes port 8000.
-Docker is optional -- for local development, the `uvicorn` command above is all you need.
+serialization, and the error-to-status-code mapping. `tests/test_jobs.py` covers the job
+system -- submission, status, success, retries, time limits, crash recovery and outages --
+using in-memory SQLite and Celery's eager mode, so no Docker, MySQL, Redis or worker is
+needed either.
 
 ## Example Prompts
 
@@ -374,11 +490,15 @@ available from `GET /api/v1/architectures/examples`.
   set of known anti-patterns the LLM might rubber-stamp past, but it isn't exhaustive.
 - **Single-cloud, AWS-only** by design, to keep the service knowledge base and reasoning
   tractable and explainable.
-- **No persistence** — each run is stateless; results are returned in the response and not
-  stored anywhere (there's no database or checkpointer configured).
-- **Synchronous API** — `POST /api/v1/architectures` holds the HTTP connection open for the
-  whole run (typically a few minutes). There is no background job queue or progress
-  streaming yet.
+- **Results are only stored for jobs** — the job endpoints save every run in MySQL; the
+  synchronous endpoint returns its result in the response and stores nothing.
+- **Polling, no live progress** — clients poll `GET /jobs/{id}`; there's no per-agent progress
+  or push notification yet.
+- **Stale jobs** — crash recovery relies on Redis handing an unacknowledged job back. If Redis
+  itself loses that message (e.g. it restarts mid-run, since it isn't persisted), the job can
+  stay at `running`; there is no automatic sweeper for that case yet.
+- **No database migrations** — the jobs table is created automatically on first use;
+  changing its schema later would need a migration tool such as Alembic.
 - **No frontend yet** — the previous Streamlit UI has been removed. Use `/docs` or any HTTP
   client. The Graphviz/Mermaid diagrams it drew are no longer generated; a frontend can
   rebuild them from `architecture.data_flow`.
@@ -398,6 +518,7 @@ available from `GET /api/v1/architectures/examples`.
 - Add a streaming endpoint for live per-agent progress (`stream_workflow_updates()` in
   `graph/workflow.py` already yields node-by-node updates).
 - Cache completed design results so repeated requests don't re-run the LLM workflow.
+- Deploy the docker-compose stack to a free cloud VM (e.g. Oracle Cloud Always Free).
 - Export the final report as PDF/Markdown.
 - Add multi-cloud service knowledge bases (Azure, GCP) behind the same tool interface.
 - Let a human reviewer inject their own required changes into the revision loop alongside the
