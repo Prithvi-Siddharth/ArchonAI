@@ -20,7 +20,8 @@ from jobs.config import get_settings
 
 _settings = get_settings()
 
-celery_app = Celery("archonai", broker=_settings.redis_url)
+# include: load the task module when a worker starts, so it knows the task exists.
+celery_app = Celery("archonai", broker=_settings.redis_url, include=["jobs.tasks"])
 
 celery_app.conf.update(
     # MySQL is the source of truth for job state; don't also store results in Redis.
