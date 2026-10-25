@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-archonai}
+      MYSQL_USER: ${MYSQL_USER:-archon}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-archon}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-archon_root}
+    ports:
+      # Bound to 127.0.0.1 so the database is reachable only from this machine.
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  mysql_data:
