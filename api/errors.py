@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from celery.exceptions import SoftTimeLimitExceeded
 from fastapi import status
 from groq import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
@@ -55,6 +56,10 @@ def classify_workflow_error(exc: BaseException) -> WorkflowFailure:
     def has(*types: type[BaseException]) -> bool:
         return any(isinstance(link, types) for link in chain)
 
+    # Raised inside a background job when it exceeds JOB_TIMEOUT_SECONDS. Not
+    # retryable: the same request would most likely run just as long again.
+    if has(SoftTimeLimitExceeded):
+        return WorkflowFailure(status.HTTP_504_GATEWAY_TIMEOUT, "Job timed out.", False)
     if has(MissingAPIKeyError):
         return WorkflowFailure(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM provider is not configured.", False)
     if has(RateLimitError) or any(isinstance(link, APIStatusError) and link.status_code == 413 for link in chain):

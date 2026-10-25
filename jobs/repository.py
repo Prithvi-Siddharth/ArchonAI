@@ -13,6 +13,8 @@ Allowed transitions:
     running -> succeeded          (mark_succeeded)
     queued | running -> failed    (mark_failed)
     running -> queued             (mark_requeued, for a retry)
+    running -> running            (mark_resumed, only when a worker crashed mid-job
+                                   and Redis redelivered it)
 """
 
 from __future__ import annotations
@@ -58,6 +60,20 @@ def mark_running(job_id: str) -> bool:
         job_id,
         (JobStatus.QUEUED,),
         status=JobStatus.RUNNING,
+        started_at=utcnow(),
+        attempts=ArchitectureJob.attempts + 1,
+    )
+
+
+def mark_resumed(job_id: str) -> bool:
+    """running -> running, for a job whose worker died mid-run.
+
+    Only called for a redelivered message (see jobs/runner.py): the earlier
+    attempt can no longer finish, so this one takes over and is counted.
+    """
+    return _transition(
+        job_id,
+        (JobStatus.RUNNING,),
         started_at=utcnow(),
         attempts=ArchitectureJob.attempts + 1,
     )

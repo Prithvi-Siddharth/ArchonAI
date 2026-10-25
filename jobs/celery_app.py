@@ -14,9 +14,19 @@ Worker concurrency comes from WORKER_CONCURRENCY (default 1); the
 
 from __future__ import annotations
 
+import os
+
 from celery import Celery
 
 from jobs.config import get_settings
+
+# On macOS the prefork pool starts its child processes with "spawn" rather
+# than "fork", and Celery's fast task-tracing path is never initialised in a
+# spawned child -- every task then fails with "ValueError: not enough values
+# to unpack (expected 3, got 0)". This flag makes the children use the
+# standard tracing path instead. Harmless on Linux, where children fork.
+# Set before the pool starts so spawned children inherit it.
+os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
 
 _settings = get_settings()
 
@@ -38,4 +48,17 @@ celery_app.conf.update(
     # Keep retrying the Redis connection if Redis is still starting up
     # (e.g. right after `docker compose up`) instead of exiting.
     broker_connection_retry_on_startup=True,
+    # Crash safety: acknowledge a job to Redis only after it finishes, and
+    # hand it back if the worker process dies mid-run, so a crash doesn't
+    # silently lose the job (jobs/runner.py decides whether to re-run it).
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    # Time limits: the soft limit raises inside the job so it can be marked
+    # failed (504) cleanly; the hard limit kills it if that doesn't work.
+    task_soft_time_limit=_settings.job_timeout_seconds,
+    task_time_limit=_settings.job_timeout_seconds + 60,
+    # Redis re-queues an unacknowledged job after this long. With acks_late
+    # it must exceed the longest possible run, or a slow but healthy job
+    # would be handed to a second worker while the first is still running.
+    broker_transport_options={"visibility_timeout": max(3600, (_settings.job_timeout_seconds + 60) * 2)},
 )
