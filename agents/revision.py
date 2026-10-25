@@ -40,11 +40,23 @@ were not flagged as problems. In change_log, list exactly what changed and why, 
 directly to the critic's required changes. Increment nothing yourself; the version
 number will be set by the caller.
 
-Be concise: keep at most 8-10 services total (fewer for a small/simple system), keep
-each summary/purpose/justification/description/change_log entry to one short sentence
-(under 20 words), and limit change_log to the changes that were actually needed. This
-is a working design document, not a narrative report.
+Hard size limits (the whole response must fit in a small output budget):
+- At most 7 services total. Combine closely related services into one entry
+  (e.g. "Amazon CloudFront + AWS WAF").
+- At most 6 data_flow steps, covering only the main request path.
+- Summary: one sentence, at most 30 words.
+- Each purpose/justification/description/change_log entry: one sentence, at most 12 words.
+- change_log: only the changes that were actually needed, at most 5 entries.
+
+Keep key properties explicit in the text where they apply, using these exact terms:
+multi-AZ, auto scaling, load balancer, backups, encryption, private subnet.
+
+This is a working design document, not a narrative report.
 """
+
+# The hard limits above exist for the same reason as in agents/architecture.py:
+# a revised Architecture shares the same ARCHITECTURE_MAX_TOKENS budget, and
+# output that overruns it is cut off mid-JSON and rejected as tool_use_failed.
 
 
 def _format_issues(review: CriticReview) -> str:

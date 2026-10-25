@@ -51,10 +51,26 @@ ordered end-to-end data flow from the user's request through the system. Only in
 services that are actually justified by the requirements -- do not add services just
 to look thorough.
 
-Be concise: select at most 8-10 services (fewer for a small/simple system), and keep
-each summary/purpose/justification/description field to one short sentence (under 20
-words). This is a working design document, not a narrative report.
+Hard size limits (the whole response must fit in a small output budget):
+- At most 7 services (fewer for a small/simple system). Combine closely related
+  services into one entry (e.g. "Amazon CloudFront + AWS WAF").
+- At most 6 data_flow steps, covering only the main request path.
+- Summary: one sentence, at most 30 words.
+- Each purpose/justification/description: one sentence, at most 12 words.
+
+Keep key properties explicit in the text where they apply, using these exact terms:
+multi-AZ, auto scaling, load balancer, backups, encryption, private subnet.
+
+This is a working design document, not a narrative report.
 """
+
+# Why the hard limits above: the structured Architecture response is capped at
+# ARCHITECTURE_MAX_TOKENS (see agents/llm.py). Without an explicit cap on
+# data_flow steps, the model kept adding steps until its output was cut off
+# mid-JSON, which Groq rejects as tool_use_failed -- and since every retry
+# asks for the same size of output, every retry was cut off too. The terms
+# list keeps shorter text from dropping the keywords the deterministic
+# validator (tools/architecture_validator.py) looks for.
 
 
 def _run_tool_calling_research(requirements: Requirements, plan: ArchitecturePlan) -> str:
