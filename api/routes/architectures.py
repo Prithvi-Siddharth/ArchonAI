@@ -9,57 +9,37 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
-from groq import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from sqlalchemy.exc import SQLAlchemyError
 
-from agents.llm import LLMInvocationError, MissingAPIKeyError
+from api.errors import classify_workflow_error
 from api.examples import load_example_prompts
-from api.schemas import ArchitectureRequest, ArchitectureResponse, ErrorResponse, ExamplePrompt
+from api.schemas import (
+    ArchitectureRequest,
+    ArchitectureResponse,
+    ErrorResponse,
+    ExamplePrompt,
+    JobStatusResponse,
+    JobSubmittedResponse,
+)
 from graph.workflow import WorkflowError, run_workflow
+from jobs import repository
+from jobs.runner import execute_job
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/architectures", tags=["architectures"])
 
 
-def _cause_chain(exc: BaseException) -> list[BaseException]:
-    """The exception plus everything it was raised from.
-
-    run_workflow wraps every failure as WorkflowError(...) from <original>,
-    and invoke_structured in turn wraps provider errors as
-    LLMInvocationError(...) from <groq error> -- the real reason a run failed
-    is usually two links down.
-    """
-    chain: list[BaseException] = []
-    current: BaseException | None = exc
-    while current is not None and current not in chain:
-        chain.append(current)
-        current = current.__cause__ or current.__context__
-    return chain
-
-
 def _to_http_error(exc: WorkflowError) -> HTTPException:
-    """Map a workflow failure to an HTTP error with a generic, safe message.
+    """Map a workflow failure to an HTTP error (rules live in api/errors.py)."""
+    failure = classify_workflow_error(exc)
+    return HTTPException(failure.status_code, failure.message)
 
-    Checks the most specific causes first (a rate limit wrapped in an
-    LLMInvocationError should still surface as 429, not 502). The raw
-    exception text is never returned -- provider error bodies can contain
-    request details -- it's only logged server-side.
-    """
-    chain = _cause_chain(exc)
 
-    def has(*types: type[BaseException]) -> bool:
-        return any(isinstance(link, types) for link in chain)
-
-    if has(MissingAPIKeyError):
-        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM provider is not configured.")
-    if has(RateLimitError) or any(isinstance(link, APIStatusError) and link.status_code == 413 for link in chain):
-        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "LLM provider rate limit reached. Please retry later.")
-    if has(APITimeoutError):
-        return HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "LLM provider timed out. Please retry later.")
-    if has(LLMInvocationError, APIConnectionError, APIStatusError):
-        return HTTPException(status.HTTP_502_BAD_GATEWAY, "LLM provider error. Please retry later.")
-    return HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error.")
+_JOB_STORE_UNAVAILABLE = HTTPException(
+    status.HTTP_503_SERVICE_UNAVAILABLE, "Job store is unavailable. Please retry later."
+)
 
 
 @router.get("/examples", response_model=list[ExamplePrompt])
@@ -96,3 +76,54 @@ def create_architecture(request: ArchitectureRequest) -> ArchitectureResponse:
         logger.exception("ArchonAI workflow failed")
         raise _to_http_error(exc) from exc
     return ArchitectureResponse.from_state(final_state)
+
+
+_JOB_ERROR_RESPONSES = {status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResponse}}
+
+
+@router.post(
+    "/jobs",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobSubmittedResponse,
+    responses=_JOB_ERROR_RESPONSES,
+)
+def submit_architecture_job(
+    body: ArchitectureRequest, background_tasks: BackgroundTasks, request: Request
+) -> JobSubmittedResponse:
+    """Queue a design request and return a job id immediately.
+
+    The workflow runs in the background; poll the returned status_url for
+    progress and the result. Jobs currently run inside the API process
+    (FastAPI BackgroundTasks), so a server restart loses a job that is
+    still running.
+    """
+    try:
+        job_id = repository.create_job(body.user_request)
+    except SQLAlchemyError:
+        logger.exception("Could not store new job")
+        raise _JOB_STORE_UNAVAILABLE from None
+
+    background_tasks.add_task(execute_job, job_id)
+    return JobSubmittedResponse(
+        job_id=job_id,
+        status="queued",
+        status_url=request.app.url_path_for("get_architecture_job", job_id=job_id),
+    )
+
+
+@router.get(
+    "/jobs/{job_id}",
+    name="get_architecture_job",
+    response_model=JobStatusResponse,
+    responses={status.HTTP_404_NOT_FOUND: {"model": ErrorResponse}, **_JOB_ERROR_RESPONSES},
+)
+def get_architecture_job(job_id: str) -> JobStatusResponse:
+    """Current status of a job, including the full result once it has succeeded."""
+    try:
+        job = repository.get_job(job_id)
+    except SQLAlchemyError:
+        logger.exception("Could not read job %s", job_id)
+        raise _JOB_STORE_UNAVAILABLE from None
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found.")
+    return JobStatusResponse.from_job(job)

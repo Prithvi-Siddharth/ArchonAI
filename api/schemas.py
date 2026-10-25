@@ -8,11 +8,13 @@ actually produces.
 
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import datetime, timezone
+from typing import Annotated, Optional
 
 from pydantic import BaseModel, Field, StringConstraints
 
 from graph.state import MAX_REVISIONS, ArchonState
+from jobs.models import ArchitectureJob, JobStatus
 from models.schemas import (
     AnalysisResult,
     Architecture,
@@ -115,3 +117,57 @@ class ErrorResponse(BaseModel):
     """Shape of every error reply (documented in /docs)."""
 
     detail: str
+
+
+class JobSubmittedResponse(BaseModel):
+    """Reply to a job submission: where to check on it."""
+
+    job_id: str
+    status: JobStatus
+    status_url: str = Field(description="Path to poll for this job's status and result.")
+
+
+class JobError(BaseModel):
+    """Client-safe description of why a job failed (or is being retried)."""
+
+    status_code: int
+    message: str
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    # Stored as naive UTC (see jobs/models.py utcnow); mark it as UTC so
+    # clients receive an unambiguous timestamp.
+    return value.replace(tzinfo=timezone.utc) if value is not None else None
+
+
+class JobStatusResponse(BaseModel):
+    """A job's current state, plus its result once it has succeeded."""
+
+    job_id: str
+    status: JobStatus
+    attempts: int
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error: Optional[JobError] = Field(
+        default=None, description="Set when the job failed, or while it is queued for a retry."
+    )
+    result: Optional[ArchitectureResponse] = Field(default=None, description="Set once status is 'succeeded'.")
+
+    @classmethod
+    def from_job(cls, job: ArchitectureJob) -> JobStatusResponse:
+        error = (
+            JobError(status_code=job.error_status_code, message=job.error_message or "")
+            if job.error_status_code is not None
+            else None
+        )
+        return cls(
+            job_id=job.id,
+            status=job.status,
+            attempts=job.attempts,
+            created_at=_as_utc(job.created_at),
+            started_at=_as_utc(job.started_at),
+            finished_at=_as_utc(job.finished_at),
+            error=error,
+            result=ArchitectureResponse.model_validate(job.result) if job.result is not None else None,
+        )
