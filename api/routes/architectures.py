@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 
 from api.errors import classify_workflow_error
@@ -24,7 +24,7 @@ from api.schemas import (
 )
 from graph.workflow import WorkflowError, run_workflow
 from jobs import repository
-from jobs.runner import execute_job
+from jobs.tasks import run_architecture_job
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,12 @@ def _to_http_error(exc: WorkflowError) -> HTTPException:
 _JOB_STORE_UNAVAILABLE = HTTPException(
     status.HTTP_503_SERVICE_UNAVAILABLE, "Job store is unavailable. Please retry later."
 )
+_JOB_QUEUE_UNAVAILABLE_MESSAGE = "Job queue is unavailable. Please retry later."
+
+# Fail fast when Redis is unreachable: Celery's default publish retry keeps
+# trying for a long time, which would leave the client hanging. A couple of
+# quick attempts still rides out a momentary blip.
+_ENQUEUE_RETRY_POLICY = {"max_retries": 2, "interval_start": 0, "interval_step": 0.5, "interval_max": 1}
 
 
 @router.get("/examples", response_model=list[ExamplePrompt])
@@ -87,15 +93,13 @@ _JOB_ERROR_RESPONSES = {status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResp
     response_model=JobSubmittedResponse,
     responses=_JOB_ERROR_RESPONSES,
 )
-def submit_architecture_job(
-    body: ArchitectureRequest, background_tasks: BackgroundTasks, request: Request
-) -> JobSubmittedResponse:
+def submit_architecture_job(body: ArchitectureRequest, request: Request) -> JobSubmittedResponse:
     """Queue a design request and return a job id immediately.
 
-    The workflow runs in the background; poll the returned status_url for
-    progress and the result. Jobs currently run inside the API process
-    (FastAPI BackgroundTasks), so a server restart loses a job that is
-    still running.
+    The job is stored in MySQL, then its id is sent through Redis to a Celery
+    worker, which runs the workflow. Poll the returned status_url for
+    progress and the result. A worker must be running for jobs to progress;
+    until one is, jobs simply wait as `queued`.
     """
     try:
         job_id = repository.create_job(body.user_request)
@@ -103,7 +107,17 @@ def submit_architecture_job(
         logger.exception("Could not store new job")
         raise _JOB_STORE_UNAVAILABLE from None
 
-    background_tasks.add_task(execute_job, job_id)
+    try:
+        run_architecture_job.apply_async(args=[job_id], retry=True, retry_policy=_ENQUEUE_RETRY_POLICY)
+    except Exception:  # noqa: BLE001 - any broker failure means the job can never run
+        logger.exception("Could not enqueue job %s", job_id)
+        # Don't leave a job that no worker will ever see sitting at `queued`.
+        try:
+            repository.mark_failed(job_id, status.HTTP_503_SERVICE_UNAVAILABLE, _JOB_QUEUE_UNAVAILABLE_MESSAGE)
+        except SQLAlchemyError:
+            logger.exception("Could not mark job %s as failed", job_id)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _JOB_QUEUE_UNAVAILABLE_MESSAGE) from None
+
     return JobSubmittedResponse(
         job_id=job_id,
         status="queued",
