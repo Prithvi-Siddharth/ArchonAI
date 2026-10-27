@@ -17,7 +17,9 @@ from __future__ import annotations
 import os
 
 from celery import Celery
+from celery.signals import after_setup_logger, worker_process_init
 
+from graph.cloudwatch_logs import configure_cloudwatch_logging
 from jobs.config import get_settings
 
 # On macOS the prefork pool starts its child processes with "spawn" rather
@@ -62,3 +64,19 @@ celery_app.conf.update(
     # would be handed to a second worker while the first is still running.
     broker_transport_options={"visibility_timeout": max(3600, (_settings.job_timeout_seconds + 60) * 2)},
 )
+
+
+# Ship worker logs to CloudWatch (/archonai/worker) when CLOUDWATCH_ENABLED=true.
+# after_setup_logger covers the main worker process, once Celery has set up
+# its own console logging; worker_process_init covers each pool child, where
+# the jobs actually run. (A forked child inherits the handler -- watchtower
+# restarts its sender thread after fork -- and the call is then a no-op; a
+# spawned child starts fresh and gets its own.)
+@after_setup_logger.connect
+def _ship_worker_logs(logger, **kwargs) -> None:
+    configure_cloudwatch_logging("worker", logger)
+
+
+@worker_process_init.connect
+def _ship_worker_child_logs(**kwargs) -> None:
+    configure_cloudwatch_logging("worker")

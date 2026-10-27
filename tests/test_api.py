@@ -1,10 +1,10 @@
-"""Tests for the FastAPI layer (api/).
+"""Tests for the FastAPI layer (api/) and the shared failure rules (api/errors.py).
 
-The LLM layer is mocked exactly as in test_graph.py, so these run the real
-LangGraph workflow end-to-end through the HTTP API without a GROQ_API_KEY or
-network access. The error-mapping tests make the LLM layer raise each kind
-of failure and check that the API returns the right status code -- and never
-leaks the raw exception text to the client.
+Job submission and status are covered in test_jobs.py. Here: the
+non-job endpoints, the absence of the removed synchronous endpoint, and the
+rules that turn a workflow failure into a client-safe status code and
+message -- which the worker stores on every failed job. The helpers at the
+top are shared with test_jobs.py and test_observability.py.
 """
 
 from __future__ import annotations
@@ -12,18 +12,16 @@ from __future__ import annotations
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from groq import APIStatusError, APITimeoutError, RateLimitError
+from groq import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 from agents import llm as llm_module
+from api.errors import classify_workflow_error
 from api.main import app
-from graph.state import MAX_REVISIONS
-
-from .test_graph import _patch_llm
+from graph.workflow import WorkflowError
 
 client = TestClient(app)
 
 ARCHITECTURES_URL = "/api/v1/architectures"
-VALID_BODY = {"user_request": "Design a blogging platform for 10,000 users."}
 
 # Embedded in every simulated failure; must never appear in an API response.
 SECRET_DETAIL = "SECRET-INTERNAL-DETAIL"
@@ -41,7 +39,18 @@ def _raise_from_llm(monkeypatch, exc: BaseException) -> None:
     monkeypatch.setattr(llm_module, "invoke_structured", failing_invoke_structured)
 
 
-# --- Health & examples -----------------------------------------------------------
+def _wrapped(exc: BaseException) -> WorkflowError:
+    """`exc` as it reaches callers: run_workflow raises WorkflowError(...) from it."""
+    try:
+        raise exc
+    except BaseException as original:
+        try:
+            raise WorkflowError(f"ArchonAI workflow failed: {original}") from original
+        except WorkflowError as wrapped:
+            return wrapped
+
+
+# --- Health, examples, docs --------------------------------------------------------
 
 
 def test_health_returns_ok():
@@ -62,135 +71,56 @@ def test_examples_returns_all_prompts_with_label_and_text():
 
 def test_docs_and_openapi_are_served():
     assert client.get("/docs").status_code == 200
-    paths = client.get("/openapi.json").json()["paths"]
-    assert {"/health", ARCHITECTURES_URL, f"{ARCHITECTURES_URL}/examples"} <= set(paths)
+    paths = set(client.get("/openapi.json").json()["paths"])
+    assert {
+        "/health",
+        f"{ARCHITECTURES_URL}/examples",
+        f"{ARCHITECTURES_URL}/jobs",
+        f"{ARCHITECTURES_URL}/jobs/{{job_id}}",
+    } <= paths
 
 
-# --- Successful runs ---------------------------------------------------------------
-
-
-def test_create_architecture_returns_full_serialized_result(monkeypatch):
-    _patch_llm(monkeypatch, critic_verdicts=[True])
-
-    response = client.post(ARCHITECTURES_URL, json=VALID_BODY)
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["approved"] is True
-    assert data["max_revisions_reached"] is False
-    assert data["revision_count"] == 0
-    for key in (
-        "requirements",
-        "architecture_plan",
-        "architecture",
-        "compute_analysis",
-        "database_analysis",
-        "networking_analysis",
-        "security_analysis",
-        "reliability_analysis",
-        "cost_analysis",
-        "validation_results",
-        "critic_review",
-        "final_report",
-    ):
-        assert data[key], f"{key} missing from response"
-    assert data["architecture"]["services"], "architecture services were not serialized"
-    nodes = [entry["node"] for entry in data["execution_trace"]]
-    assert nodes[0] == "Requirements Analyzer"
-    assert nodes[-1] == "Final Report"
-
-
-def test_create_architecture_reports_revision_loop(monkeypatch):
-    _patch_llm(monkeypatch, critic_verdicts=[False, True])
-
-    data = client.post(ARCHITECTURES_URL, json=VALID_BODY).json()
-
-    assert data["approved"] is True
-    assert data["revision_count"] == 1
-    assert data["architecture"]["version"] == 2
-
-
-def test_create_architecture_flags_max_revisions_reached(monkeypatch):
-    _patch_llm(monkeypatch, critic_verdicts=[False])
-
-    response = client.post(ARCHITECTURES_URL, json=VALID_BODY)
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["approved"] is False
-    assert data["max_revisions_reached"] is True
-    assert data["revision_count"] == MAX_REVISIONS
-    # Enums serialize as plain strings, not Python objects.
-    assert data["critic_review"]["issues"][0]["severity"] == "high"
-
-
-def test_create_architecture_strips_surrounding_whitespace(monkeypatch):
-    seen = {}
-
-    def fake_run_workflow(user_request):
-        seen["user_request"] = user_request
-        raise RuntimeError("stop here")
-
-    monkeypatch.setattr("api.routes.architectures.run_workflow", fake_run_workflow)
-    client_no_raise = TestClient(app, raise_server_exceptions=False)
-    client_no_raise.post(ARCHITECTURES_URL, json={"user_request": "   Design a blog for 10k users   "})
-
-    assert seen["user_request"] == "Design a blog for 10k users"
-
-
-# --- Invalid input -----------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"user_request": ""},
-        {"user_request": "     "},
-        {"user_request": "too short"},
-        {"user_request": "x" * 4001},
-        {"user_request": 12345},
-        {},
-    ],
-)
-def test_invalid_input_is_rejected_without_running_the_workflow(monkeypatch, body):
+def test_synchronous_endpoint_was_removed(monkeypatch):
+    # Designs only run in the background worker now; the API must never run the
+    # workflow itself, even if someone calls the old synchronous route.
     def must_not_run(user_request):
-        raise AssertionError("workflow should not run for invalid input")
+        raise AssertionError("the API must not run the workflow")
 
-    monkeypatch.setattr("api.routes.architectures.run_workflow", must_not_run)
+    monkeypatch.setattr("graph.workflow.run_workflow", must_not_run)
 
-    response = client.post(ARCHITECTURES_URL, json=body)
+    response = client.post(ARCHITECTURES_URL, json={"user_request": "Design a blogging platform for 10,000 users."})
 
-    assert response.status_code == 422
+    assert response.status_code in (404, 405)
+    assert ARCHITECTURES_URL not in client.get("/openapi.json").json()["paths"]
 
 
-# --- Workflow failures -------------------------------------------------------------
+# --- Failure classification (stored on failed jobs) --------------------------------
 
 
 @pytest.mark.parametrize(
-    ("exc", "expected_status"),
+    ("exc", "expected_status", "expected_retryable"),
     [
-        (llm_module.MissingAPIKeyError(SECRET_DETAIL), 503),
-        (RateLimitError(SECRET_DETAIL, response=httpx.Response(429, request=_REQUEST), body=None), 429),
-        (APIStatusError(SECRET_DETAIL, response=httpx.Response(413, request=_REQUEST), body=None), 429),
-        (APITimeoutError(request=_REQUEST), 504),
-        (llm_module.LLMInvocationError(SECRET_DETAIL), 502),
-        (APIStatusError(SECRET_DETAIL, response=httpx.Response(500, request=_REQUEST), body=None), 502),
-        (RuntimeError(SECRET_DETAIL), 500),
+        (llm_module.MissingAPIKeyError(SECRET_DETAIL), 503, False),
+        (RateLimitError(SECRET_DETAIL, response=httpx.Response(429, request=_REQUEST), body=None), 429, True),
+        (APIStatusError(SECRET_DETAIL, response=httpx.Response(413, request=_REQUEST), body=None), 429, True),
+        (APITimeoutError(request=_REQUEST), 504, True),
+        (APIConnectionError(message=SECRET_DETAIL, request=_REQUEST), 502, True),
+        (llm_module.LLMInvocationError(SECRET_DETAIL), 502, False),
+        (APIStatusError(SECRET_DETAIL, response=httpx.Response(500, request=_REQUEST), body=None), 502, False),
+        (RuntimeError(SECRET_DETAIL), 500, False),
     ],
-    ids=["missing-key", "rate-limit", "http-413", "timeout", "llm-error", "provider-500", "unexpected"],
+    ids=["missing-key", "rate-limit", "http-413", "timeout", "connection", "llm-error", "provider-500", "unexpected"],
 )
-def test_workflow_failures_map_to_http_errors_without_leaking_details(monkeypatch, exc, expected_status):
-    _raise_from_llm(monkeypatch, exc)
+def test_workflow_failures_are_classified_without_leaking_details(exc, expected_status, expected_retryable):
+    failure = classify_workflow_error(_wrapped(exc))
 
-    response = client.post(ARCHITECTURES_URL, json=VALID_BODY)
-
-    assert response.status_code == expected_status
-    assert set(response.json()) == {"detail"}
-    assert SECRET_DETAIL not in response.text
-    assert "Traceback" not in response.text
+    assert failure.status_code == expected_status
+    assert failure.retryable is expected_retryable
+    assert SECRET_DETAIL not in failure.message
+    assert "Traceback" not in failure.message
 
 
-def test_rate_limit_wrapped_in_llm_invocation_error_still_maps_to_429(monkeypatch):
+def test_rate_limit_wrapped_in_llm_invocation_error_is_still_a_retryable_429():
     # This is how a real exhausted rate limit arrives: invoke_structured
     # wraps the groq error as LLMInvocationError(...) from RateLimitError.
     try:
@@ -198,12 +128,11 @@ def test_rate_limit_wrapped_in_llm_invocation_error_still_maps_to_429(monkeypatc
     except RateLimitError as rate_limit:
         try:
             raise llm_module.LLMInvocationError(SECRET_DETAIL) from rate_limit
-        except llm_module.LLMInvocationError as wrapped:
-            exc = wrapped
+        except llm_module.LLMInvocationError as llm_error:
+            exc = llm_error
 
-    _raise_from_llm(monkeypatch, exc)
+    failure = classify_workflow_error(_wrapped(exc))
 
-    response = client.post(ARCHITECTURES_URL, json=VALID_BODY)
-
-    assert response.status_code == 429
-    assert SECRET_DETAIL not in response.text
+    assert failure.status_code == 429
+    assert failure.retryable is True
+    assert SECRET_DETAIL not in failure.message

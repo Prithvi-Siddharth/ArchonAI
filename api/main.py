@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from api.routes import architectures
 from api.schemas import HealthResponse
+from graph.cloudwatch_logs import configure_cloudwatch_logging
 
 # override=True so a .env edit is picked up on a --reload restart even if the
 # variable was already set in the shell (matches the previous Streamlit app).
@@ -24,6 +25,10 @@ load_dotenv(override=True)
 # Without a handler on the root logger, logger.exception() in the routes
 # would only reach stderr via Python's bare last-resort handler.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+# Also ship logs to CloudWatch (/archonai/api) when CLOUDWATCH_ENABLED=true.
+# Console logging above is unaffected either way.
+configure_cloudwatch_logging("api")
 
 app = FastAPI(
     title="ArchonAI",

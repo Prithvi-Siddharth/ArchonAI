@@ -9,7 +9,27 @@ negative cases that deliberately violate individual rules.
 
 from __future__ import annotations
 
-from models.schemas import (
+import os
+
+import dotenv
+
+# Tests must never ship logs to real CloudWatch, even if a developer's .env
+# sets CLOUDWATCH_ENABLED=true. The app calls load_dotenv(override=True) at
+# import time, which would overwrite a value set here -- so for the test run,
+# make .env loading non-overriding. This conftest is imported before any app
+# module, so their `from dotenv import load_dotenv` picks up the wrapper.
+os.environ["CLOUDWATCH_ENABLED"] = "false"
+_real_load_dotenv = dotenv.load_dotenv
+
+
+def _load_dotenv_without_override(*args, **kwargs):
+    kwargs["override"] = False
+    return _real_load_dotenv(*args, **kwargs)
+
+
+dotenv.load_dotenv = _load_dotenv_without_override
+
+from models.schemas import (  # noqa: E402
     AnalysisResult,
     Architecture,
     ArchitecturePlan,

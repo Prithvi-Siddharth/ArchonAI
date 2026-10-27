@@ -43,6 +43,10 @@ services:
       # Inside Docker, MySQL and Redis are reached by service name, not localhost.
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-archon}:${MYSQL_PASSWORD:-archon}@mysql:3306/${MYSQL_DATABASE:-archonai}
       REDIS_URL: redis://redis:6379/0
+    volumes: &aws-profile
+      # Local development only: lets CloudWatch logging use the AWS_PROFILE named
+      # in .env (e.g. archonai-dev). Read-only; no credentials enter the image.
+      - ${HOME}/.aws:/root/.aws:ro
     ports:
       - "127.0.0.1:8000:8000"
     depends_on: &needs-mysql-and-redis
@@ -60,6 +64,7 @@ services:
       - path: .env
         required: false
     environment: *service-addresses
+    volumes: *aws-profile
     depends_on:
       <<: *needs-mysql-and-redis
       # Build the shared image (via the api service) before starting the worker.

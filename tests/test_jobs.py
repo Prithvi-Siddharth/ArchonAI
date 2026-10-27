@@ -15,6 +15,7 @@ from groq import RateLimitError
 from kombu.exceptions import OperationalError
 
 from agents import llm as llm_module
+from graph.state import MAX_REVISIONS
 from api.main import app
 from jobs import db, repository
 from jobs.celery_app import celery_app
@@ -91,7 +92,25 @@ def test_submit_returns_202_with_job_id_and_stores_queued_job(monkeypatch):
     assert job.attempts == 0
 
 
-@pytest.mark.parametrize("body", [{"user_request": ""}, {"user_request": "   "}, {"user_request": "short"}, {}])
+def test_submitted_request_is_stored_without_surrounding_whitespace(monkeypatch):
+    monkeypatch.setattr(run_architecture_job, "apply_async", lambda *args, **kwargs: None)
+
+    response = client.post(JOBS_URL, json={"user_request": "   Design a blog for 10k users   "})
+
+    assert repository.get_job(response.json()["job_id"]).user_request == "Design a blog for 10k users"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"user_request": ""},
+        {"user_request": "   "},
+        {"user_request": "short"},
+        {"user_request": "x" * 4001},
+        {"user_request": 12345},
+        {},
+    ],
+)
 def test_invalid_submission_is_rejected_and_nothing_is_stored(monkeypatch, body):
     def must_not_be_called(*args, **kwargs):
         raise AssertionError("no job should be stored for invalid input")
@@ -128,6 +147,30 @@ def test_successful_job_stores_and_returns_full_result(monkeypatch):
     assert result["architecture"]["services"]
     assert result["final_report"]["executive_summary"]
     assert [entry["node"] for entry in result["execution_trace"]][-1] == "Final Report"
+
+
+def test_job_result_reports_the_revision_loop(monkeypatch):
+    _patch_llm(monkeypatch, critic_verdicts=[False, True])
+
+    result = client.get(f"{JOBS_URL}/{_submit()}").json()["result"]
+
+    assert result["approved"] is True
+    assert result["revision_count"] == 1
+    assert result["architecture"]["version"] == 2
+
+
+def test_job_result_flags_max_revisions_reached(monkeypatch):
+    _patch_llm(monkeypatch, critic_verdicts=[False])
+
+    data = client.get(f"{JOBS_URL}/{_submit()}").json()
+
+    # Not being approved is still a successful run: the report lists open items.
+    assert data["status"] == "succeeded"
+    result = data["result"]
+    assert result["approved"] is False
+    assert result["max_revisions_reached"] is True
+    assert result["revision_count"] == MAX_REVISIONS
+    assert result["critic_review"]["issues"][0]["severity"] == "high"  # enums serialize as plain strings
 
 
 # --- Failures and retries ---------------------------------------------------------

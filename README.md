@@ -207,8 +207,9 @@ concrete reason for each one it picks.
 ## REST API
 
 ArchonAI is served as a **FastAPI** application ([api/main.py](api/main.py)). The API layer is
-deliberately thin: it validates the request, calls the existing `run_workflow()` from
-[graph/workflow.py](graph/workflow.py) unchanged, and serializes the result. All
+deliberately thin: it validates the request, stores a job, and hands it to the background
+worker -- **the API never runs the workflow itself**. The worker calls the existing
+`run_workflow()` from [graph/workflow.py](graph/workflow.py) unchanged. All
 design/analysis/critique logic stays in `agents/` and `graph/`.
 
 Interactive docs are available at **http://localhost:8000/docs** once the server is running.
@@ -217,54 +218,25 @@ Interactive docs are available at **http://localhost:8000/docs** once the server
 |--------|------|-------------|
 | `GET` | `/health` | Liveness check. Does not call the LLM. |
 | `GET` | `/api/v1/architectures/examples` | Example prompts (stored in [data/example_prompts.json](data/example_prompts.json)). |
-| `POST` | `/api/v1/architectures` | Runs the full multi-agent workflow and returns the result (synchronous). |
 | `POST` | `/api/v1/architectures/jobs` | Queues a design request and returns a `job_id` immediately (`202`). |
 | `GET` | `/api/v1/architectures/jobs/{job_id}` | Job status, plus the full result once it has succeeded. |
 
-For anything beyond a quick test, prefer the **job endpoints** (see
-[Background Jobs](#background-jobs) below): they don't hold a connection open for minutes.
-
-### Example requests
-
-```bash
-curl http://localhost:8000/health
-# {"status":"ok"}
-
-curl http://localhost:8000/api/v1/architectures/examples
-
-curl -X POST http://localhost:8000/api/v1/architectures \
-  -H "Content-Type: application/json" \
-  -d '{"user_request": "Design a blogging platform for 10,000 users"}' \
-  --max-time 900
-```
-
-`POST /api/v1/architectures` is **synchronous** -- the request stays open until the whole
-workflow finishes, which typically takes a few minutes (longer if Groq rate limits trigger
-backoff). Use a generous client timeout.
+See [Background Jobs](#background-jobs) below for the full flow and examples.
 
 **Request body:** `{"user_request": "<10-4000 characters>"}`. Surrounding whitespace is
-trimmed; blank, too-short, or too-long input is rejected with `422` before any LLM call.
+trimmed; blank, too-short, or too-long input is rejected with `422` before anything is stored.
 
-**Response (`200`):** the full run result -- `approved`, `max_revisions_reached`,
-`revision_count`, `requirements`, `architecture_plan`, `architecture` (services + data flow),
-the five specialist analyses, `cost_analysis`, `validation_results`, `critic_review`,
-`final_report`, and the `execution_trace`. These reuse the Pydantic models in
+**Result** (the job's `result` field once it has succeeded): `approved`,
+`max_revisions_reached`, `revision_count`, `requirements`, `architecture_plan`, `architecture`
+(services + data flow), the five specialist analyses, `cost_analysis`, `validation_results`,
+`critic_review`, `final_report`, and the `execution_trace`. These reuse the Pydantic models in
 [models/schemas.py](models/schemas.py).
 
 **Errors** return `{"detail": "<message>"}` with a generic, client-safe message. Full
 exception details are logged server-side only and never returned to the client.
 
-| Status | When |
-|--------|------|
-| `422` | Invalid request body |
-| `429` | Groq rate limit still exceeded after automatic retries |
-| `500` | Unexpected internal error |
-| `502` | LLM provider error or invalid structured output |
-| `503` | `GROQ_API_KEY` is not configured |
-| `504` | LLM provider timed out |
-
 Note that if only the critic, revision, or report LLM call fails, the workflow's existing
-fallbacks still complete the run, so the API returns `200` -- check `approved` and the
+fallbacks still complete the run, so the job still `succeeded` -- check `approved` and the
 `execution_trace` to see what happened.
 
 ## Background Jobs
@@ -319,8 +291,15 @@ curl http://localhost:8000/api/v1/architectures/jobs/3f2a…
 | `422` | Invalid request body |
 | `503` | MySQL (job store) or Redis (job queue) unavailable |
 
-A failed job is still a `200` on `GET` -- its `error` field holds the status code and message
-(e.g. `429`, `502`, `503`, `504`) using the same rules as the synchronous endpoint.
+A failed job is still a `200` on `GET` -- its `error` field holds the status code and message:
+
+| `error.status_code` | When |
+|--------|------|
+| `429` | Groq rate limit still exceeded after automatic retries |
+| `500` | Unexpected internal error, or the job was interrupted too many times |
+| `502` | LLM provider error or invalid structured output |
+| `503` | `GROQ_API_KEY` is not configured |
+| `504` | LLM provider timed out, or the job exceeded `JOB_TIMEOUT_SECONDS` |
 
 ### Job settings
 
@@ -340,6 +319,85 @@ LLM calls in parallel, so the Groq rate limit -- not CPU -- is the bottleneck; m
 jobs mostly means more `429`s. To change it, set `WORKER_CONCURRENCY` in `.env` and restart the
 worker (or pass `--concurrency=N` when starting it locally). Raise it only while measured
 jobs-per-hour keeps improving.
+
+## Logging & CloudWatch
+
+### Structured logs and timings
+
+Every job, workflow run, and LangGraph node logs one structured `key=value` line
+([graph/observability.py](graph/observability.py)), timed with a monotonic clock:
+
+```
+event=job_started job_id=3f2a… attempt=1 redelivered=false
+event=node_finished job_id=3f2a… node=compute_agent iteration=0 outcome=success duration_ms=4120
+event=workflow_finished job_id=3f2a… outcome=success approved=true revision_count=1 duration_ms=142350
+event=job_succeeded job_id=3f2a… attempt=1 duration_ms=142400
+```
+
+Nodes are wrapped, not modified, so parallel nodes are timed independently, and every line
+logged during a job carries its `job_id`. Only metadata is logged -- never request text, LLM
+output, API keys, or exception messages (failures log `error_type` and `status_code`; full
+tracebacks only appear at DEBUG level).
+
+```bash
+docker compose logs -f worker | grep "event="          # or the celery terminal locally
+docker compose logs worker | grep "job_id=<your-id>"   # everything for one job
+```
+
+### Shipping logs to AWS CloudWatch (optional)
+
+With `CLOUDWATCH_ENABLED=true`, the same lines are **also** sent to CloudWatch Logs
+([graph/cloudwatch_logs.py](graph/cloudwatch_logs.py)); console output is unchanged.
+
+| Service | Log group |
+|---------|-----------|
+| API | `/archonai/api` |
+| Worker (incl. all job and node events) | `/archonai/worker` |
+
+- **Batched and non-blocking** -- logs are queued and sent every few seconds from a background
+  thread ([watchtower](https://github.com/kislyuk/watchtower)), so a slow or unreachable AWS
+  never delays a request or job.
+- **One log stream per process per day** (`<date>/<host>/<pid>`), not one per event.
+- **Failures are harmless** -- missing credentials or a bad profile disable CloudWatch with an
+  `event=cloudwatch_disabled` warning at startup; delivery errors become warnings. The app and
+  console logging keep working.
+- **Log groups are not created by the app.** Create them beforehand (with a retention policy);
+  the app only needs `logs:CreateLogStream` and `logs:PutLogEvents` on them.
+
+**Configuration** (`.env`; see [.env.example](.env.example)):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CLOUDWATCH_ENABLED` | `false` | Turn shipping on |
+| `AWS_REGION` | `ap-south-1` | Region of the log groups |
+| `AWS_PROFILE` | *(unset)* | **Local development only**, e.g. `archonai-dev`. Leave unset in production so the AWS SDK's default credential chain (environment variables, IAM role) is used |
+| `CLOUDWATCH_API_LOG_GROUP` / `CLOUDWATCH_WORKER_LOG_GROUP` | `/archonai/api` / `/archonai/worker` | Log group names |
+| `CLOUDWATCH_SEND_INTERVAL_SECONDS` | `5` | How often batches are sent |
+
+Credentials are never stored in the project. Locally they stay in `~/.aws` (docker-compose mounts
+it read-only into the `api` and `worker` containers). Tests force CloudWatch off and use a
+stubbed AWS client, so they never need credentials or reach AWS.
+
+**Enable it locally:** add to `.env`
+
+```
+CLOUDWATCH_ENABLED=true
+AWS_PROFILE=archonai-dev
+```
+
+then restart (`docker compose up -d --build`, or restart uvicorn/celery). Startup logs
+`event=cloudwatch_enabled service=api log_group=/archonai/api …`.
+
+**Check the logs in AWS:**
+
+```bash
+aws logs tail /archonai/worker --follow --profile archonai-dev
+aws logs tail /archonai/api --since 15m --profile archonai-dev
+aws logs filter-log-events --log-group-name /archonai/worker \
+  --filter-pattern '"event=node_finished"' --profile archonai-dev
+```
+
+or open **CloudWatch → Log groups → /archonai/worker** in the AWS console (region `ap-south-1`).
 
 ## Project Structure
 
@@ -366,7 +424,9 @@ archonai/
 │   ├── critic.py / revision.py / report.py
 ├── graph/
 │   ├── state.py                 # Typed ArchonState + trace helpers
-│   └── workflow.py               # StateGraph wiring, routing, streaming
+│   ├── workflow.py              # StateGraph wiring, routing, streaming
+│   ├── observability.py         # Structured log events + per-node timing
+│   └── cloudwatch_logs.py       # Optional CloudWatch Logs shipping
 ├── tools/
 │   ├── aws_service_search.py
 │   ├── architecture_validator.py
@@ -446,8 +506,8 @@ Use **one option at a time**: if the Docker `api`/`worker` containers are runnin
 (`docker compose stop api worker`) before starting uvicorn/celery locally, or port 8000 will
 clash and two workers will share the queue.
 
-`/health` and the synchronous `POST /api/v1/architectures` work without MySQL or Redis; only the
-job endpoints need them.
+`/health` and `/examples` work without MySQL or Redis; the job endpoints need both, plus a
+running worker -- without one, jobs simply wait as `queued`.
 
 ### Run the Tests
 
@@ -490,8 +550,6 @@ available from `GET /api/v1/architectures/examples`.
   set of known anti-patterns the LLM might rubber-stamp past, but it isn't exhaustive.
 - **Single-cloud, AWS-only** by design, to keep the service knowledge base and reasoning
   tractable and explainable.
-- **Results are only stored for jobs** — the job endpoints save every run in MySQL; the
-  synchronous endpoint returns its result in the response and stores nothing.
 - **Polling, no live progress** — clients poll `GET /jobs/{id}`; there's no per-agent progress
   or push notification yet.
 - **Stale jobs** — crash recovery relies on Redis handing an unacknowledged job back. If Redis
