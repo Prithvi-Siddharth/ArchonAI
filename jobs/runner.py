@@ -5,6 +5,10 @@ jobs/tasks.py today -- so the queue never shapes this logic. The workflow
 itself is the existing run_workflow(), unchanged. The caller only supplies
 two decisions it alone can make: whether a retry is still available, and
 whether this delivery is a redelivery after a worker crash.
+
+Logging: every event is structured (graph/observability.py) and runs inside
+job_context(job_id), so the workflow and per-node timing events logged
+during the run carry this job's id too.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from typing import Optional
 
 from api.errors import WorkflowFailure, classify_workflow_error
 from api.schemas import ArchitectureResponse
+from graph.observability import elapsed_ms, job_context, log_event, now
 from graph.workflow import run_workflow
 from jobs import repository
 from jobs.config import get_settings
@@ -39,13 +44,20 @@ def _claim(job_id: str, status: JobStatus, attempts: int, redelivered: bool) -> 
     if redelivered and status is JobStatus.RUNNING:
         if attempts > get_settings().job_max_retries:
             repository.mark_failed(job_id, _INTERRUPTED_TOO_OFTEN.status_code, _INTERRUPTED_TOO_OFTEN.message)
-            logger.warning("Job %s was interrupted %d times; marked failed.", job_id, attempts)
+            log_event(
+                logger,
+                "job_failed",
+                logging.WARNING,
+                reason="interrupted_too_often",
+                attempt=attempts,
+                status_code=_INTERRUPTED_TOO_OFTEN.status_code,
+            )
             return False
         if repository.mark_resumed(job_id):
-            logger.warning("Job %s was interrupted by a worker crash; running it again.", job_id)
+            log_event(logger, "job_resumed_after_crash", logging.WARNING, previous_attempts=attempts)
             return True
 
-    logger.info("Job %s is not queued (status=%s); skipping.", job_id, status.value)
+    log_event(logger, "job_skipped", reason="not_queued", status=status.value)
     return False
 
 
@@ -61,27 +73,44 @@ def execute_job(job_id: str, *, allow_retry: bool = False, redelivered: bool = F
     Returns None on success (or when the job was skipped), or the classified
     failure so the caller can decide whether to retry.
     """
-    job = repository.get_job(job_id)
-    if job is None:
-        logger.warning("Job %s not found; nothing to run.", job_id)
+    with job_context(job_id):
+        job = repository.get_job(job_id)
+        if job is None:
+            log_event(logger, "job_skipped", logging.WARNING, reason="not_found")
+            return None
+
+        if not _claim(job_id, job.status, job.attempts, redelivered):
+            return None
+
+        attempt = job.attempts + 1
+        log_event(logger, "job_started", attempt=attempt, redelivered=redelivered)
+        start = now()
+
+        try:
+            final_state = run_workflow(job.user_request)
+            result = ArchitectureResponse.from_state(final_state).model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 - every failure must end in a stored job status
+            failure = classify_workflow_error(exc)
+            will_retry = failure.retryable and allow_retry
+            if will_retry:
+                repository.mark_requeued(job_id, failure.status_code, failure.message)
+            else:
+                repository.mark_failed(job_id, failure.status_code, failure.message)
+            log_event(
+                logger,
+                "job_failed",
+                logging.WARNING if will_retry else logging.ERROR,
+                attempt=attempt,
+                status_code=failure.status_code,
+                error_type=type(exc.__cause__ or exc).__name__,
+                will_retry=will_retry,
+                duration_ms=elapsed_ms(start),
+            )
+            # The traceback can contain provider error text that echoes request
+            # details, so it's kept out of the default (INFO) log output.
+            logger.debug("Traceback for failed job %s", job_id, exc_info=True)
+            return failure
+
+        repository.mark_succeeded(job_id, result)
+        log_event(logger, "job_succeeded", attempt=attempt, duration_ms=elapsed_ms(start))
         return None
-
-    if not _claim(job_id, job.status, job.attempts, redelivered):
-        return None
-
-    try:
-        final_state = run_workflow(job.user_request)
-        result = ArchitectureResponse.from_state(final_state).model_dump(mode="json")
-    except Exception as exc:  # noqa: BLE001 - every failure must end in a stored job status
-        failure = classify_workflow_error(exc)
-        if failure.retryable and allow_retry:
-            logger.warning("Job %s hit a temporary failure (%s); will retry.", job_id, failure.status_code)
-            repository.mark_requeued(job_id, failure.status_code, failure.message)
-        else:
-            logger.exception("Job %s failed", job_id)
-            repository.mark_failed(job_id, failure.status_code, failure.message)
-        return failure
-
-    repository.mark_succeeded(job_id, result)
-    logger.info("Job %s succeeded.", job_id)
-    return None

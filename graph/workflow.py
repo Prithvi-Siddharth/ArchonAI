@@ -27,6 +27,8 @@ per-minute ceiling.
 
 from __future__ import annotations
 
+import logging
+
 from langgraph.graph import END, START, StateGraph
 
 from agents import (
@@ -43,8 +45,11 @@ from agents import (
     revision as revision_agent,
     security as security_agent,
 )
+from graph.observability import elapsed_ms, log_event, now, timed_node
 from graph.state import MAX_REVISIONS, ArchonState, create_initial_state, make_trace_entry
 from tools.architecture_validator import validate_architecture
+
+logger = logging.getLogger(__name__)
 
 # Node name constants, reused for both graph wiring and trace/UI display.
 REQUIREMENTS_ANALYZER = "requirements_analyzer"
@@ -139,19 +144,24 @@ def build_graph():
     """Construct and compile the ArchonAI LangGraph StateGraph."""
     graph = StateGraph(ArchonState)
 
-    graph.add_node(REQUIREMENTS_ANALYZER, requirements_agent.run)
-    graph.add_node(ARCHITECTURE_PLANNER, planner_agent.run)
-    graph.add_node(ARCHITECTURE_DESIGNER, architecture_agent.run)
-    graph.add_node(COMPUTE_AGENT, compute_agent.run)
-    graph.add_node(DATABASE_AGENT, database_agent.run)
-    graph.add_node(NETWORKING_AGENT, networking_agent.run)
-    graph.add_node(SECURITY_AGENT, security_agent.run)
-    graph.add_node(RELIABILITY_AGENT, reliability_agent.run)
-    graph.add_node(COST_AGENT, cost_agent.run)
-    graph.add_node(ARCHITECTURE_VALIDATOR, _run_validator)
-    graph.add_node(ARCHITECTURE_CRITIC, critic_agent.run)
-    graph.add_node(ARCHITECTURE_REVISION, revision_agent.run)
-    graph.add_node(FINAL_REPORT, report_agent.run)
+    nodes = {
+        REQUIREMENTS_ANALYZER: requirements_agent.run,
+        ARCHITECTURE_PLANNER: planner_agent.run,
+        ARCHITECTURE_DESIGNER: architecture_agent.run,
+        COMPUTE_AGENT: compute_agent.run,
+        DATABASE_AGENT: database_agent.run,
+        NETWORKING_AGENT: networking_agent.run,
+        SECURITY_AGENT: security_agent.run,
+        RELIABILITY_AGENT: reliability_agent.run,
+        COST_AGENT: cost_agent.run,
+        ARCHITECTURE_VALIDATOR: _run_validator,
+        ARCHITECTURE_CRITIC: critic_agent.run,
+        ARCHITECTURE_REVISION: revision_agent.run,
+        FINAL_REPORT: report_agent.run,
+    }
+    # Each node is wrapped (not modified) to log its duration and outcome.
+    for name, run in nodes.items():
+        graph.add_node(name, timed_node(name, run))
 
     graph.add_edge(START, REQUIREMENTS_ANALYZER)
     graph.add_edge(REQUIREMENTS_ANALYZER, ARCHITECTURE_PLANNER)
@@ -221,11 +231,29 @@ def run_workflow(user_request: str) -> ArchonState:
     graph = get_compiled_graph()
     initial_state = create_initial_state(user_request.strip())
 
+    log_event(logger, "workflow_started")
+    start = now()
     try:
         final_state = graph.invoke(initial_state, config={"recursion_limit": 60})
     except Exception as exc:  # noqa: BLE001 - normalize all graph failures for the UI
+        log_event(
+            logger,
+            "workflow_finished",
+            logging.WARNING,
+            outcome="failure",
+            error_type=type(exc).__name__,
+            duration_ms=elapsed_ms(start),
+        )
         raise WorkflowError(f"ArchonAI workflow failed: {exc}") from exc
 
+    log_event(
+        logger,
+        "workflow_finished",
+        outcome="success",
+        approved=final_state["critic_review"].approved,
+        revision_count=final_state.get("revision_count", 0),
+        duration_ms=elapsed_ms(start),
+    )
     return final_state
 
 
