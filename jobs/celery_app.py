@@ -17,9 +17,10 @@ from __future__ import annotations
 import os
 
 from celery import Celery
-from celery.signals import after_setup_logger, worker_process_init
+from celery.signals import after_setup_logger, worker_process_init, worker_process_shutdown, worker_shutdown
 
 from graph.cloudwatch_logs import configure_cloudwatch_logging
+from graph.cloudwatch_metrics import configure_cloudwatch_metrics, shutdown_cloudwatch_metrics
 from jobs.config import get_settings
 
 # On macOS the prefork pool starts its child processes with "spawn" rather
@@ -72,11 +73,24 @@ celery_app.conf.update(
 # the jobs actually run. (A forked child inherits the handler -- watchtower
 # restarts its sender thread after fork -- and the call is then a no-op; a
 # spawned child starts fresh and gets its own.)
+#
+# Metrics (CLOUDWATCH_METRICS_ENABLED=true) are started at the same two
+# points, for the same reasons; a forked child resets the inherited
+# publisher on first use. Buffered datapoints are sent on shutdown -- pool
+# children exit without running atexit hooks, hence the explicit signals.
 @after_setup_logger.connect
 def _ship_worker_logs(logger, **kwargs) -> None:
     configure_cloudwatch_logging("worker", logger)
+    configure_cloudwatch_metrics("worker")
 
 
 @worker_process_init.connect
 def _ship_worker_child_logs(**kwargs) -> None:
     configure_cloudwatch_logging("worker")
+    configure_cloudwatch_metrics("worker")
+
+
+@worker_process_shutdown.connect
+@worker_shutdown.connect
+def _flush_worker_metrics(**kwargs) -> None:
+    shutdown_cloudwatch_metrics()

@@ -19,6 +19,7 @@ import dotenv
 # make .env loading non-overriding. This conftest is imported before any app
 # module, so their `from dotenv import load_dotenv` picks up the wrapper.
 os.environ["CLOUDWATCH_ENABLED"] = "false"
+os.environ["CLOUDWATCH_METRICS_ENABLED"] = "false"
 _real_load_dotenv = dotenv.load_dotenv
 
 

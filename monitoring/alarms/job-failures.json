@@ -1,0 +1,16 @@
+{
+  "AlarmName": "ArchonAI-JobFailures",
+  "AlarmDescription": "3 or more ArchonAI jobs failed permanently (after retries) within one hour. Check the /archonai/worker log group for event=job_failed.",
+  "Namespace": "ArchonAI",
+  "MetricName": "JobsCompleted",
+  "Dimensions": [{"Name": "Outcome", "Value": "failed"}],
+  "Statistic": "Sum",
+  "Period": 3600,
+  "EvaluationPeriods": 1,
+  "DatapointsToAlarm": 1,
+  "Threshold": 3,
+  "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+  "TreatMissingData": "notBreaching",
+  "ActionsEnabled": true,
+  "AlarmActions": []
+}

@@ -1,0 +1,111 @@
+{
+  "start": "-P7D",
+  "periodOverride": "inherit",
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 2,
+      "properties": {
+        "markdown": "## ArchonAI\nCustom metrics published by the background worker (namespace `ArchonAI`, region ap-south-1). Per-job detail, including job ids, is in the `/archonai/worker` log group."
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 2,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Jobs completed (per hour)",
+        "region": "ap-south-1",
+        "view": "timeSeries",
+        "stacked": true,
+        "stat": "Sum",
+        "period": 3600,
+        "metrics": [
+          ["ArchonAI", "JobsCompleted", "Outcome", "succeeded", {"label": "Succeeded", "color": "#2ca02c"}],
+          ["ArchonAI", "JobsCompleted", "Outcome", "failed", {"label": "Failed", "color": "#d62728"}]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 2,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Retries and workflow failures (per hour)",
+        "region": "ap-south-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "stat": "Sum",
+        "period": 3600,
+        "metrics": [
+          ["ArchonAI", "JobRetries", {"label": "Job retries", "color": "#ff7f0e"}],
+          ["ArchonAI", "WorkflowFailures", {"label": "Workflow failures (per attempt)", "color": "#d62728"}]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 8,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Workflow duration (ms)",
+        "region": "ap-south-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "period": 3600,
+        "metrics": [
+          ["ArchonAI", "WorkflowDuration", "Outcome", "success", {"stat": "Average", "label": "Successful runs (average)"}],
+          ["ArchonAI", "WorkflowDuration", "Outcome", "success", {"stat": "Maximum", "label": "Successful runs (max)"}],
+          ["ArchonAI", "WorkflowDuration", "Outcome", "failure", {"stat": "Maximum", "label": "Failed runs (max)", "color": "#d62728"}]
+        ],
+        "annotations": {
+          "horizontal": [{"label": "Default job timeout (900 s)", "value": 900000}]
+        },
+        "yAxis": {"left": {"min": 0, "label": "ms", "showUnits": false}}
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 8,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Slowest agents (max ms over the selected range)",
+        "region": "ap-south-1",
+        "view": "bar",
+        "period": 3600,
+        "metrics": [
+          [{"expression": "SEARCH('{ArchonAI,Agent} MetricName=\"AgentDuration\"', 'Maximum', 3600)", "id": "slowest", "label": "${PROP('Dim.Agent')}"}]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 14,
+      "width": 24,
+      "height": 7,
+      "properties": {
+        "title": "Agent duration (average ms, per agent)",
+        "region": "ap-south-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "period": 3600,
+        "metrics": [
+          [{"expression": "SEARCH('{ArchonAI,Agent} MetricName=\"AgentDuration\"', 'Average', 3600)", "id": "agents", "label": "${PROP('Dim.Agent')}"}]
+        ],
+        "yAxis": {"left": {"min": 0, "label": "ms", "showUnits": false}}
+      }
+    }
+  ]
+}

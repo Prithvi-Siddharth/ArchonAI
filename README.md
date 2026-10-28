@@ -399,6 +399,109 @@ aws logs filter-log-events --log-group-name /archonai/worker \
 
 or open **CloudWatch → Log groups → /archonai/worker** in the AWS console (region `ap-south-1`).
 
+### Custom metrics, dashboard and alarms (optional)
+
+With `CLOUDWATCH_METRICS_ENABLED=true`, the worker also publishes metrics to the CloudWatch
+namespace **`ArchonAI`** ([graph/cloudwatch_metrics.py](graph/cloudwatch_metrics.py)). They come
+from the same structured events as the logs above; nothing is instrumented twice.
+
+| Metric | Dimensions | Unit | From event |
+|--------|------------|------|------------|
+| `WorkflowDuration` | `Outcome` (`success`/`failure`) | Milliseconds | `workflow_finished` (one per attempt) |
+| `AgentDuration` | `Agent` (graph node name) | Milliseconds | `node_finished` |
+| `JobsCompleted` | `Outcome` (`succeeded`/`failed`) | Count | `job_succeeded`, final `job_failed` |
+| `JobRetries` | – | Count | `job_failed` with `will_retry=true`, `job_resumed_after_crash` |
+| `WorkflowFailures` | – | Count | `workflow_finished` with `outcome=failure` (one per failed attempt) |
+
+- **Low-cardinality dimensions only.** Job ids stay in the logs; every distinct dimension
+  value is a separately billed metric.
+- **No double counting.** Job outcomes are de-duplicated per job and attempt, and the runner only
+  reports an outcome when its guarded status update succeeded.
+- **Batched and non-blocking.** Datapoints are buffered and sent in one `PutMetricData` call
+  every `CLOUDWATCH_METRICS_FLUSH_INTERVAL_SECONDS` from a background thread.
+- **Failures are harmless.** botocore retries throttling and network errors with backoff, a
+  failed batch gets one more try on the next flush, and is then dropped with an
+  `event=metrics_publish_failed` warning. The buffer is bounded. Jobs and console logging are
+  never affected.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CLOUDWATCH_METRICS_ENABLED` | `false` | Turn metrics on (separate from `CLOUDWATCH_ENABLED`) |
+| `CLOUDWATCH_METRICS_NAMESPACE` | `ArchonAI` | Metric namespace (the dashboard, alarms and IAM policy assume `ArchonAI`) |
+| `CLOUDWATCH_METRICS_FLUSH_INTERVAL_SECONDS` | `10` | How often batches are sent |
+
+`AWS_REGION` and `AWS_PROFILE` are shared with logging. Tests force metrics off and use stubbed
+clients.
+
+**IAM permissions** (policy documents in [monitoring/iam/](monitoring/iam/), attach them in the
+IAM console; nothing here changes IAM for you):
+
+| Who | Policy | Actions |
+|-----|--------|---------|
+| The app (`archonai-dev` locally, the instance/task role in production) | [archonai-metrics-publish-policy.json](monitoring/iam/archonai-metrics-publish-policy.json) | `cloudwatch:PutMetricData`, only for namespace `ArchonAI` |
+| Whoever creates and views the dashboard/alarms | [archonai-monitoring-setup-policy.json](monitoring/iam/archonai-monitoring-setup-policy.json) | View: `GetMetricData`, `GetMetricStatistics`, `ListMetrics`, `ListDashboards`, `DescribeAlarms`. Manage: `PutDashboard`/`GetDashboard` on `ArchonAI`, `PutMetricAlarm`/`SetAlarmState`/`DeleteAlarms` on `ArchonAI-*` alarms |
+
+`PutMetricData` doesn't support resource ARNs, so the publish policy is limited by the
+`cloudwatch:namespace` condition instead.
+
+**Create or update the dashboard** ([monitoring/archonai-dashboard.json](monitoring/archonai-dashboard.json)).
+It shows jobs by outcome, retries and failures, workflow duration and per-agent duration.
+
+```bash
+aws cloudwatch put-dashboard --dashboard-name ArchonAI \
+  --dashboard-body file://monitoring/archonai-dashboard.json --region ap-south-1
+```
+
+Re-run the same command after editing the file. Then open **CloudWatch → Dashboards → ArchonAI**.
+
+**Create or update the alarms** ([monitoring/alarms/](monitoring/alarms/)):
+
+| Alarm | Fires when | Why it stays quiet at low traffic |
+|-------|-----------|-----------------------------------|
+| `ArchonAI-JobFailures` | ≥ 3 jobs fail permanently (after retries) within 1 hour | Absolute count, not a rate; missing data = OK |
+| `ArchonAI-SlowWorkflows` | Successful runs exceed 12 min (80% of the default 900 s timeout) in 2 of the last 3 hours | Needs sustained slowness; missing data = OK |
+
+```bash
+aws cloudwatch put-metric-alarm --cli-input-json file://monitoring/alarms/job-failures.json --region ap-south-1
+aws cloudwatch put-metric-alarm --cli-input-json file://monitoring/alarms/workflow-duration.json --region ap-south-1
+```
+
+To change a threshold, edit `Threshold` (and `Period`/`DatapointsToAlarm`) in the JSON file and
+re-run the command. If you raise `JOB_TIMEOUT_SECONDS`, set the duration threshold to about 80% of
+it, in milliseconds. To get notified, create an SNS topic with an email subscription and put its
+ARN in `AlarmActions`.
+
+**Test an alarm** without waiting for real failures (it returns to normal at the next evaluation):
+
+```bash
+aws cloudwatch set-alarm-state --alarm-name ArchonAI-JobFailures \
+  --state-value ALARM --state-reason "Manual test" --region ap-south-1
+aws cloudwatch describe-alarms --alarm-name-prefix ArchonAI- \
+  --query 'MetricAlarms[].[AlarmName,StateValue]' --output table --region ap-south-1
+```
+
+Run these with an identity that has the setup policy, by adding `--profile <name>`. The app's
+`archonai-dev` user only needs to publish.
+
+**Check that metrics arrive.** Run a job; datapoints appear within a few minutes. Reading metrics
+needs [archonai-metrics-read-policy.json](monitoring/iam/archonai-metrics-read-policy.json)
+(`ListMetrics`, `GetMetricData`, `GetMetricStatistics`); the publish-only policy can't read.
+[monitoring/verify_metrics.py](monitoring/verify_metrics.py) discovers every published metric
+and dimension combination and prints its datapoints for a UTC window:
+
+```bash
+python monitoring/verify_metrics.py --start 2026-10-28T07:00:00Z --end 2026-10-28T07:15:00Z --profile archonai-dev
+```
+
+Each dimension combination is a separate metric in CloudWatch: `AgentDuration` has data only
+with an `Agent` dimension, `WorkflowDuration` and `JobsCompleted` only with `Outcome`. Querying
+them without those dimensions returns nothing.
+
+**Cost.** CloudWatch's free tier includes 10 custom metrics. This setup creates up to about 19
+(13 agents, plus 2 workflow durations, plus 2 job outcomes, plus retries and failures), roughly
+$0.30 per extra metric per month, and only while data is being published. The dashboard (3 free)
+and the 2 alarms (10 free) are within the free tier.
+
 ## Project Structure
 
 ```
@@ -426,7 +529,8 @@ archonai/
 │   ├── state.py                 # Typed ArchonState + trace helpers
 │   ├── workflow.py              # StateGraph wiring, routing, streaming
 │   ├── observability.py         # Structured log events + per-node timing
-│   └── cloudwatch_logs.py       # Optional CloudWatch Logs shipping
+│   ├── cloudwatch_logs.py       # Optional CloudWatch Logs shipping
+│   └── cloudwatch_metrics.py    # Optional CloudWatch custom metrics (from the same events)
 ├── tools/
 │   ├── aws_service_search.py
 │   ├── architecture_validator.py
@@ -435,6 +539,7 @@ archonai/
 ├── data/
 │   ├── aws_services.json         # AWS service knowledge base
 │   └── example_prompts.json      # Example prompts served by the API
+├── monitoring/                   # CloudWatch dashboard, alarm and IAM policy definitions
 ├── tests/                        # pytest suite, LLM calls mocked
 ├── Dockerfile                    # Image used by both the api and worker services
 └── docker-compose.yml            # mysql, redis, api, worker

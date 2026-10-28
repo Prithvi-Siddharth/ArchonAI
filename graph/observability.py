@@ -16,6 +16,11 @@ LangGraph's parallel node threads, which inherit the context -- carries it.
 Only metadata is logged (ids, node names, durations, status codes,
 exception *types*). Never log request text, LLM output, or exception
 messages here: provider errors can echo request details.
+
+Event listeners (add_event_listener) receive every event's name and fields
+directly, independent of log levels and handlers -- this is how
+graph/cloudwatch_metrics.py turns the same events into metrics without any
+extra instrumentation.
 """
 
 from __future__ import annotations
@@ -35,6 +40,9 @@ _clock: Callable[[], float] = time.perf_counter
 _current_job_id: ContextVar[Optional[str]] = ContextVar("archonai_job_id", default=None)
 
 _logger = logging.getLogger("archonai.timing")
+
+EventListener = Callable[[str, dict[str, Any]], None]
+_event_listeners: list[EventListener] = []
 
 
 def now() -> float:
@@ -78,6 +86,22 @@ def log_event(logger: logging.Logger, event: str, level: int = logging.INFO, **f
     fields = {k: v for k, v in fields.items() if v is not None}
     message = " ".join([f"event={event}", *(f"{k}={_format_value(v)}" for k, v in fields.items())])
     logger.log(level, message, extra={"event_fields": {"event": event, **fields}})
+    for listener in tuple(_event_listeners):
+        try:
+            listener(event, dict(fields))
+        except Exception:  # noqa: BLE001 - monitoring must never break the code it monitors
+            pass
+
+
+def add_event_listener(listener: EventListener) -> None:
+    """Call `listener(event, fields)` for every event logged from now on."""
+    if listener not in _event_listeners:
+        _event_listeners.append(listener)
+
+
+def remove_event_listener(listener: EventListener) -> None:
+    if listener in _event_listeners:
+        _event_listeners.remove(listener)
 
 
 def timed_node(name: str, func: Callable[[dict], dict]) -> Callable[[dict], dict]:

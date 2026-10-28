@@ -1,0 +1,16 @@
+{
+  "AlarmName": "ArchonAI-SlowWorkflows",
+  "AlarmDescription": "Successful workflow runs took over 12 minutes (80% of the default 900 s job timeout) in 2 of the last 3 hours, so jobs are close to being stopped. Usually Groq rate limiting: compare event=node_finished durations in /archonai/worker. If JOB_TIMEOUT_SECONDS is raised, raise Threshold to about 80% of it (ms).",
+  "Namespace": "ArchonAI",
+  "MetricName": "WorkflowDuration",
+  "Dimensions": [{"Name": "Outcome", "Value": "success"}],
+  "Statistic": "Maximum",
+  "Period": 3600,
+  "EvaluationPeriods": 3,
+  "DatapointsToAlarm": 2,
+  "Threshold": 720000,
+  "ComparisonOperator": "GreaterThanThreshold",
+  "TreatMissingData": "notBreaching",
+  "ActionsEnabled": true,
+  "AlarmActions": []
+}

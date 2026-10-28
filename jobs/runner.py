@@ -93,9 +93,12 @@ def execute_job(job_id: str, *, allow_retry: bool = False, redelivered: bool = F
             failure = classify_workflow_error(exc)
             will_retry = failure.retryable and allow_retry
             if will_retry:
-                repository.mark_requeued(job_id, failure.status_code, failure.message)
+                stored = repository.mark_requeued(job_id, failure.status_code, failure.message)
             else:
-                repository.mark_failed(job_id, failure.status_code, failure.message)
+                stored = repository.mark_failed(job_id, failure.status_code, failure.message)
+            if not stored:
+                _log_already_finished(attempt)
+                return None
             log_event(
                 logger,
                 "job_failed",
@@ -111,6 +114,15 @@ def execute_job(job_id: str, *, allow_retry: bool = False, redelivered: bool = F
             logger.debug("Traceback for failed job %s", job_id, exc_info=True)
             return failure
 
-        repository.mark_succeeded(job_id, result)
+        if not repository.mark_succeeded(job_id, result):
+            _log_already_finished(attempt)
+            return None
         log_event(logger, "job_succeeded", attempt=attempt, duration_ms=elapsed_ms(start))
         return None
+
+
+def _log_already_finished(attempt: int) -> None:
+    # The guarded update found the job no longer `running`: another delivery
+    # already recorded its outcome. Reporting this run as job_succeeded or
+    # job_failed too would count the job twice in logs and metrics.
+    log_event(logger, "job_skipped", logging.WARNING, reason="already_finished", attempt=attempt)
