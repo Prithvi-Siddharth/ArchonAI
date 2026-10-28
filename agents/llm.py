@@ -17,10 +17,12 @@ import time
 from typing import Any, Callable, TypeVar
 
 from dotenv import load_dotenv
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.outputs import LLMResult
 from pydantic import BaseModel
 
-from graph.observability import log_event
+from graph.observability import current_node, log_event
 
 load_dotenv(override=True)
 
@@ -131,10 +133,57 @@ def _log_llm_failure(exc: BaseException, will_retry: bool, **fields: Any) -> Non
         logger,
         "llm_request_failed",
         logging.WARNING,
+        node=current_node(),
         **_provider_error_fields(exc),
         will_retry=will_retry,
         **fields,
     )
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _usage_fields(response: LLMResult) -> dict[str, Any]:
+    """Token counts and finish reason from a completed call (numbers and an identifier only)."""
+    usage = (response.llm_output or {}).get("token_usage") or {}
+    details = usage.get("completion_tokens_details") or {}
+    generation = response.generations[0][0] if response.generations and response.generations[0] else None
+    finish_reason = (generation.generation_info or {}).get("finish_reason") if generation is not None else None
+    return {
+        "input_tokens": _int_or_none(usage.get("prompt_tokens")),
+        "output_tokens": _int_or_none(usage.get("completion_tokens")),
+        "reasoning_tokens": _int_or_none(details.get("reasoning_tokens")) if isinstance(details, dict) else None,
+        "finish_reason": finish_reason
+        if isinstance(finish_reason, str) and _ERROR_CODE_PATTERN.fullmatch(finish_reason)
+        else None,
+    }
+
+
+class _UsageLogger(BaseCallbackHandler):
+    """Logs each successful LLM call's real token usage next to its max_tokens cap.
+
+    Groq's output-tokens-per-minute limit reserves a request's max_tokens
+    from the budget up front, so the gap between `max_tokens` and
+    `output_tokens` is budget held back for nothing -- these numbers are what
+    per-agent caps should be set from. finish_reason=length means the answer
+    hit the cap and was cut off. Counts only; never prompt or output text.
+    """
+
+    def __init__(self, max_tokens: int):
+        self.max_tokens = max_tokens
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        try:
+            log_event(
+                logger,
+                "llm_call_finished",
+                node=current_node(),
+                max_tokens=self.max_tokens,
+                **_usage_fields(response),
+            )
+        except Exception:  # noqa: BLE001 - usage logging must never break an LLM call
+            pass
 
 
 def _invoke_with_retry(call: Callable[[], T], max_attempts: int = 5) -> T:
@@ -199,6 +248,9 @@ def _build_groq_llm(temperature: float, max_tokens: int) -> BaseChatModel:
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=REQUEST_TIMEOUT_SECONDS,
+        # Attached to the model, so it also covers structured-output and
+        # tool-calling wrappers (and the temperature-bumped copies used on retry).
+        callbacks=[_UsageLogger(max_tokens)],
     )
 
 

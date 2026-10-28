@@ -334,6 +334,14 @@ event=workflow_finished job_id=3f2a… outcome=success approved=true revision_co
 event=job_succeeded job_id=3f2a… attempt=1 duration_ms=142400
 ```
 
+Every successful LLM call logs its real token usage next to its `max_tokens` cap. Groq's
+output-tokens-per-minute limit reserves the cap up front, so this shows how much budget each agent
+holds back; `finish_reason=length` means the answer was cut off at the cap:
+
+```
+event=llm_call_finished job_id=3f2a… node=security_agent max_tokens=750 input_tokens=812 output_tokens=311 reasoning_tokens=120 finish_reason=tool_calls
+```
+
 A failed LLM request logs what the provider said, without its message text:
 
 ```

@@ -38,6 +38,9 @@ from typing import Any, Optional
 _clock: Callable[[], float] = time.perf_counter
 
 _current_job_id: ContextVar[Optional[str]] = ContextVar("archonai_job_id", default=None)
+# The graph node currently running, set by timed_node(). Each parallel node
+# runs in its own copied context, so this never leaks between them.
+_current_node: ContextVar[Optional[str]] = ContextVar("archonai_node", default=None)
 
 _logger = logging.getLogger("archonai.timing")
 
@@ -67,6 +70,11 @@ def job_context(job_id: str) -> Iterator[None]:
 
 def current_job_id() -> Optional[str]:
     return _current_job_id.get()
+
+
+def current_node() -> Optional[str]:
+    """Name of the graph node running in this context (None outside a node)."""
+    return _current_node.get()
 
 
 def _format_value(value: Any) -> str:
@@ -116,6 +124,7 @@ def timed_node(name: str, func: Callable[[dict], dict]) -> Callable[[dict], dict
     @functools.wraps(func)
     def wrapper(state: dict) -> dict:
         iteration = state.get("revision_count", 0) if isinstance(state, dict) else None
+        node_token = _current_node.set(name)
         start = now()
         try:
             result = func(state)
@@ -131,6 +140,8 @@ def timed_node(name: str, func: Callable[[dict], dict]) -> Callable[[dict], dict
                 duration_ms=elapsed_ms(start),
             )
             raise
+        finally:
+            _current_node.reset(node_token)
         log_event(
             _logger, "node_finished", node=name, iteration=iteration, outcome="success", duration_ms=elapsed_ms(start)
         )

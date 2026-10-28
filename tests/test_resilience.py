@@ -365,3 +365,147 @@ class TestRateLimitJitter:
             llm_module._invoke_with_retry(always_timing_out, max_attempts=3)
 
         assert slept == [1.0, 2.0]
+
+
+def _groq_with_fake_http(max_tokens: int, response: dict):
+    """A real ChatGroq whose HTTP calls are answered locally -- nothing reaches Groq."""
+    import httpx as _httpx
+    from langchain_groq import ChatGroq
+
+    transport = _httpx.MockTransport(lambda request: _httpx.Response(200, json=response))
+    return ChatGroq(
+        model="test-model",
+        api_key="test-key",
+        max_tokens=max_tokens,
+        callbacks=[llm_module._UsageLogger(max_tokens)],
+        http_client=_httpx.Client(transport=transport),
+    )
+
+
+def _tool_call_completion(usage: dict | None, finish_reason: str = "tool_calls") -> dict:
+    import json as _json
+
+    arguments = {"domain": "Security", "recommendations": [SECRET], "reasoning": SECRET, "risks": [SECRET]}
+    completion = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": finish_reason,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "AnalysisResult", "arguments": _json.dumps(arguments)},
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    if usage is not None:
+        completion["usage"] = usage
+    return completion
+
+
+def _usage_events(caplog) -> list[dict]:
+    return [r.event_fields for r in caplog.records if getattr(r, "event_fields", {}).get("event") == "llm_call_finished"]
+
+
+class TestTokenUsageLogging:
+    """Each successful call logs its real token usage next to its max_tokens cap
+    (Groq reserves the cap against the output-tokens-per-minute budget)."""
+
+    def test_structured_call_logs_usage_cap_and_node(self, caplog):
+        from graph.observability import timed_node
+        from models.schemas import AnalysisResult
+
+        usage = {
+            "prompt_tokens": 812,
+            "completion_tokens": 311,
+            "total_tokens": 1123,
+            "completion_tokens_details": {"reasoning_tokens": 120},
+        }
+        llm = _groq_with_fake_http(750, _tool_call_completion(usage))
+        node = timed_node("security_agent", lambda state: {"r": llm_module.invoke_structured(llm, AnalysisResult, SECRET)})
+
+        with caplog.at_level("INFO"):
+            node({})
+
+        (event,) = _usage_events(caplog)
+        assert {k: event[k] for k in ("node", "max_tokens", "input_tokens", "output_tokens", "reasoning_tokens")} == {
+            "node": "security_agent",
+            "max_tokens": 750,
+            "input_tokens": 812,
+            "output_tokens": 311,
+            "reasoning_tokens": 120,
+        }
+        assert event["finish_reason"] == "tool_calls"
+        assert SECRET not in caplog.text  # counts only, never the prompt or the answer
+
+    def test_answer_cut_off_at_the_cap_shows_finish_reason_length(self, caplog):
+        from models.schemas import AnalysisResult
+
+        usage = {"prompt_tokens": 900, "completion_tokens": 400, "total_tokens": 1300}
+        llm = _groq_with_fake_http(400, _tool_call_completion(usage, finish_reason="length"))
+
+        with caplog.at_level("INFO"):
+            llm_module.invoke_structured(llm, AnalysisResult, "prompt")
+
+        (event,) = _usage_events(caplog)
+        assert (event["output_tokens"], event["max_tokens"], event["finish_reason"]) == (400, 400, "length")
+        assert "reasoning_tokens" not in event  # not reported by this response, so left out
+        assert "node" not in event  # called outside a graph node
+
+    def test_missing_or_malformed_usage_is_left_out(self):
+        from langchain_core.outputs import ChatGeneration, LLMResult
+        from langchain_core.messages import AIMessage
+
+        generation = ChatGeneration(message=AIMessage(content=""), generation_info={"finish_reason": "a b c"})
+        response = LLMResult(
+            generations=[[generation]],
+            llm_output={"token_usage": {"prompt_tokens": "812", "completion_tokens": True, "completion_tokens_details": 5}},
+        )
+
+        assert llm_module._usage_fields(response) == {
+            "input_tokens": None,
+            "output_tokens": None,
+            "reasoning_tokens": None,
+            "finish_reason": None,
+        }
+        assert llm_module._usage_fields(LLMResult(generations=[], llm_output=None))["output_tokens"] is None
+
+    def test_usage_logging_never_breaks_a_call(self):
+        llm_module._UsageLogger(750).on_llm_end(object())  # not an LLMResult: must not raise
+
+    def test_get_llm_attaches_the_usage_logger_with_its_cap(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_PROVIDER", "groq")
+
+        llm = llm_module.get_llm(max_tokens=420)
+
+        (usage_logger,) = [cb for cb in llm.callbacks if isinstance(cb, llm_module._UsageLogger)]
+        assert usage_logger.max_tokens == 420
+
+    def test_failure_log_names_the_node_it_happened_in(self, caplog):
+        from graph.observability import timed_node
+
+        error = APIStatusError("x", response=_fake_response(500), body=None)
+
+        def failing_node(state):
+            def provider_error():
+                raise error
+
+            llm_module.invoke_with_retry(provider_error)
+
+        with caplog.at_level("WARNING"), pytest.raises(APIStatusError):
+            timed_node("cost_agent", failing_node)({})
+
+        (failure,) = _llm_failures(caplog)
+        assert failure["node"] == "cost_agent"
