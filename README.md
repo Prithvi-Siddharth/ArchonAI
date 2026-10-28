@@ -334,6 +334,13 @@ event=workflow_finished job_id=3f2a… outcome=success approved=true revision_co
 event=job_succeeded job_id=3f2a… attempt=1 duration_ms=142400
 ```
 
+A failed LLM request logs what the provider said, without its message text:
+
+```
+event=llm_request_failed job_id=3f2a… error_type=RateLimitError provider_status=429 provider_error_code=rate_limit_exceeded will_retry=true call_attempt=1 retry_in_ms=5420
+event=llm_request_failed job_id=3f2a… error_type=BadRequestError provider_status=400 provider_error_code=tool_use_failed will_retry=false schema=AnalysisResult call_attempt=3
+```
+
 Nodes are wrapped, not modified, so parallel nodes are timed independently, and every line
 logged during a job carries its `job_id`. Only metadata is logged -- never request text, LLM
 output, API keys, or exception messages (failures log `error_type` and `status_code`; full

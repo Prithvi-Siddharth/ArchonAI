@@ -20,6 +20,7 @@ from agents import llm as llm_module
 from agents import report as report_agent
 from agents import revision as revision_agent
 from graph.state import create_initial_state
+from models.schemas import Requirements
 
 from .conftest import (
     make_analysis,
@@ -175,3 +176,192 @@ class TestRetryOnHttp413:
 
         assert result == "ok"
         assert calls["n"] == 2
+
+
+SECRET = "SECRET-PROMPT-AND-GENERATION"
+
+
+def _llm_failures(caplog) -> list[dict]:
+    return [r.event_fields for r in caplog.records if getattr(r, "event_fields", {}).get("event") == "llm_request_failed"]
+
+
+class _FailingStructuredLLM:
+    """A stand-in chat model whose structured call raises the given errors in turn."""
+
+    temperature = 0.2
+
+    def __init__(self, *errors: BaseException):
+        self._errors = list(errors)
+
+    def with_structured_output(self, schema):
+        return self
+
+    def invoke(self, prompt):
+        raise self._errors.pop(0) if len(self._errors) > 1 else self._errors[0]
+
+    def model_copy(self, update):
+        return self
+
+
+class TestProviderErrorLogging:
+    """Failed provider calls log their HTTP status and error code -- never
+    the message, body, prompt or generated content."""
+
+    def test_permanent_error_logs_status_and_code_once_and_keeps_exception_types(self, caplog):
+        error = APIStatusError(
+            SECRET,
+            response=_fake_response(401),
+            body={"error": {"message": SECRET, "type": "invalid_request_error", "code": "invalid_api_key"}},
+        )
+
+        with caplog.at_level("WARNING"), pytest.raises(llm_module.LLMInvocationError) as raised:
+            llm_module.invoke_structured(_FailingStructuredLLM(error), Requirements, SECRET)
+
+        assert raised.value.__cause__ is error  # unchanged: classification still sees the provider error
+        (failure,) = _llm_failures(caplog)  # not retried, logged exactly once
+        assert failure["provider_status"] == 401
+        assert failure["provider_error_code"] == "invalid_api_key"
+        assert failure["error_type"] == "APIStatusError"
+        assert failure["will_retry"] is False
+        assert failure["schema"] == "Requirements"
+        assert SECRET not in caplog.text
+
+    def test_tool_use_failures_log_each_attempt_with_their_code(self, caplog):
+        error = APIStatusError(
+            "Error code: 400 - tool_use_failed " + SECRET,
+            response=_fake_response(400),
+            body={"error": {"message": SECRET, "code": "tool_use_failed", "failed_generation": SECRET}},
+        )
+
+        with caplog.at_level("WARNING"), pytest.raises(llm_module.LLMInvocationError):
+            llm_module.invoke_structured(_FailingStructuredLLM(error), Requirements, "prompt")
+
+        failures = _llm_failures(caplog)
+        assert [(f["provider_status"], f["provider_error_code"], f["call_attempt"]) for f in failures] == [
+            (400, "tool_use_failed", 1),
+            (400, "tool_use_failed", 2),
+            (400, "tool_use_failed", 3),
+        ]
+        assert [f["will_retry"] for f in failures] == [True, True, False]
+        assert SECRET not in caplog.text
+
+    def test_error_without_a_body_code_logs_only_the_status(self, caplog):
+        error = APIStatusError(SECRET, response=_fake_response(500), body=None)
+
+        def provider_error():
+            raise error
+
+        with caplog.at_level("WARNING"), pytest.raises(APIStatusError):
+            llm_module.invoke_with_retry(provider_error)
+
+        (failure,) = _llm_failures(caplog)
+        assert failure["provider_status"] == 500
+        assert "provider_error_code" not in failure  # None fields are dropped from the event
+        assert SECRET not in caplog.text
+
+    @pytest.mark.parametrize(
+        "code",
+        [SECRET + " with spaces", "x" * 65, {"nested": "object"}, 42],
+        ids=["free-text", "too-long", "dict", "number"],
+    )
+    def test_error_code_that_is_not_a_short_identifier_is_not_logged(self, code):
+        error = APIStatusError("x", response=_fake_response(400), body={"error": {"code": code}})
+
+        assert llm_module._provider_error_fields(error)["provider_error_code"] is None
+
+    def test_network_error_has_no_status_or_code(self):
+        from groq import APIConnectionError
+
+        fields = llm_module._provider_error_fields(APIConnectionError(request=_fake_response(500).request))
+
+        assert fields == {"error_type": "APIConnectionError", "provider_status": None, "provider_error_code": None}
+
+    def test_retried_rate_limit_logs_each_wait_then_the_final_failure(self, monkeypatch, caplog):
+        monkeypatch.setattr(llm_module.time, "sleep", lambda seconds: None)
+        monkeypatch.setattr(llm_module, "_random", lambda: 0.0)
+        error = RateLimitError(
+            SECRET, response=_fake_response(429, {"retry-after": "4"}), body={"error": {"code": "rate_limit_exceeded"}}
+        )
+
+        def always_rate_limited():
+            raise error
+
+        with caplog.at_level("WARNING"), pytest.raises(RateLimitError):
+            llm_module.invoke_with_retry(always_rate_limited)
+
+        failures = _llm_failures(caplog)
+        assert [(f["will_retry"], f.get("retry_in_ms")) for f in failures] == [(True, 5000)] * 4 + [(False, None)]
+        assert {(f["provider_status"], f["provider_error_code"]) for f in failures} == {(429, "rate_limit_exceeded")}
+
+
+class TestRateLimitJitter:
+    """Rate-limit waits get bounded, additive random jitter so parallel agents
+    don't all retry at the same instant."""
+
+    def test_retry_after_is_honored_and_jitter_only_adds(self, monkeypatch):
+        error = RateLimitError("x", response=_fake_response(429, {"retry-after": "10"}), body=None)
+
+        monkeypatch.setattr(llm_module, "_random", lambda: 0.0)
+        assert llm_module._rate_limit_backoff_seconds(error, 0) == 11.0  # Retry-After + 1 s, as before
+        monkeypatch.setattr(llm_module, "_random", lambda: 0.5)
+        assert llm_module._rate_limit_backoff_seconds(error, 0) == 11.0 + 0.5 * llm_module.RATE_LIMIT_JITTER_SECONDS
+
+    def test_parallel_agents_with_the_same_retry_after_wait_different_times(self, monkeypatch):
+        error = RateLimitError("x", response=_fake_response(429, {"retry-after": "10"}), body=None)
+        draws = iter([0.1, 0.9])
+        monkeypatch.setattr(llm_module, "_random", lambda: next(draws))
+
+        first, second = (llm_module._rate_limit_backoff_seconds(error, 0) for _ in range(2))
+
+        assert first != second
+        assert 11.0 <= min(first, second) and max(first, second) <= 11.0 + llm_module.RATE_LIMIT_JITTER_SECONDS
+
+    @pytest.mark.parametrize(
+        ("headers", "attempt", "base"),
+        [
+            ({"retry-after": "3600"}, 0, 60.0),  # a long quota reset is still capped
+            ({}, 0, 15.0),
+            ({}, 10, 60.0),
+            ({"retry-after": "soon"}, 1, 30.0),  # unparseable header: linear fallback
+        ],
+        ids=["capped-retry-after", "no-header", "no-header-capped", "bad-header"],
+    )
+    def test_wait_stays_within_the_cap_plus_jitter(self, monkeypatch, headers, attempt, base):
+        monkeypatch.setattr(llm_module, "_random", lambda: 0.999999)
+        error = RateLimitError("x", response=_fake_response(429, headers), body=None)
+
+        delay = llm_module._rate_limit_backoff_seconds(error, attempt)
+
+        assert base <= delay < base + llm_module.RATE_LIMIT_JITTER_SECONDS
+        assert delay < llm_module.MAX_RATE_LIMIT_BACKOFF_SECONDS + llm_module.RATE_LIMIT_JITTER_SECONDS
+
+    def test_retry_loop_sleeps_the_jittered_delay_and_stays_bounded(self, monkeypatch):
+        slept: list[float] = []
+        monkeypatch.setattr(llm_module.time, "sleep", slept.append)
+        monkeypatch.setattr(llm_module, "_random", lambda: 0.5)
+        calls = {"n": 0}
+
+        def always_rate_limited():
+            calls["n"] += 1
+            raise RateLimitError("x", response=_fake_response(429, {"retry-after": "2"}), body=None)
+
+        with pytest.raises(RateLimitError):
+            llm_module._invoke_with_retry(always_rate_limited, max_attempts=5)
+
+        assert calls["n"] == 5  # retry limit unchanged
+        assert slept == [3.0 + 1.5] * 4  # Retry-After + 1 s + jitter, between attempts only
+
+    def test_network_errors_keep_their_existing_backoff(self, monkeypatch):
+        from groq import APITimeoutError
+
+        slept: list[float] = []
+        monkeypatch.setattr(llm_module.time, "sleep", slept.append)
+        monkeypatch.setattr(llm_module, "_random", lambda: 0.5)
+
+        def always_timing_out():
+            raise APITimeoutError(request=_fake_response(500).request)
+
+        with pytest.raises(APITimeoutError):
+            llm_module._invoke_with_retry(always_timing_out, max_attempts=3)
+
+        assert slept == [1.0, 2.0]

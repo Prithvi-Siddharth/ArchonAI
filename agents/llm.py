@@ -9,15 +9,25 @@ future provider such as Amazon Bedrock can be added later by extending
 
 from __future__ import annotations
 
+import logging
 import os
+import random
+import re
 import time
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel
 
+from graph.observability import log_event
+
 load_dotenv(override=True)
+
+logger = logging.getLogger(__name__)
+
+# Indirection so tests can make the jitter deterministic.
+_random: Callable[[], float] = random.random
 
 DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 
@@ -44,6 +54,22 @@ REQUEST_TIMEOUT_SECONDS = 90
 # (see DEFAULT_MAX_TOKENS) -- 1400 was still occasionally rejected outright.
 ARCHITECTURE_MAX_TOKENS = 900
 
+# Longest wait honored for one rate-limit retry, before jitter.
+MAX_RATE_LIMIT_BACKOFF_SECONDS = 60.0
+
+# Random extra wait (0 to this many seconds) added to every rate-limit
+# backoff. Parallel agents that hit the same rolling window get the same
+# Retry-After, and without jitter they all retry at the same instant and
+# trip the limit again together. Only ever added -- never subtracted from
+# Retry-After -- and small next to the wait itself, so the worst case grows
+# by at most this much per retry.
+RATE_LIMIT_JITTER_SECONDS = 3.0
+
+# Provider error codes are short identifiers like "rate_limit_exceeded" or
+# "tool_use_failed"; anything else isn't logged, so free text from a
+# response body can never end up in the logs.
+_ERROR_CODE_PATTERN = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -56,26 +82,59 @@ class LLMInvocationError(RuntimeError):
 
 
 def _rate_limit_backoff_seconds(exc: Exception, attempt: int) -> float:
-    """Best-effort backoff delay for a rate-limited call.
+    """Best-effort backoff delay for a rate-limited call, plus jitter.
 
     Honors Groq's `Retry-After` header when present (Groq's free tier enforces
     a rolling tokens-per-minute window and tells you exactly how long is left
-    in it); otherwise falls back to capped exponential backoff.
+    in it); otherwise falls back to a capped linear backoff. Either way, up
+    to RATE_LIMIT_JITTER_SECONDS of random delay is added on top.
     """
+    return _base_rate_limit_backoff_seconds(exc, attempt) + _random() * RATE_LIMIT_JITTER_SECONDS
+
+
+def _base_rate_limit_backoff_seconds(exc: Exception, attempt: int) -> float:
     response = getattr(exc, "response", None)
     retry_after = getattr(response, "headers", {}).get("retry-after") if response is not None else None
     if retry_after:
         try:
             # Cap what we'll honor: this is meant for a rolling per-minute
             # window, not a long-window quota reset that could be hours away.
-            return min(float(retry_after) + 1.0, 60.0)
+            return min(float(retry_after) + 1.0, MAX_RATE_LIMIT_BACKOFF_SECONDS)
         except ValueError:
             pass
     # No Retry-After header (observed for output-tokens-per-minute
     # rejections): we're waiting for a shared rolling window to age out, not
     # backing off from our own aggressive retries, so scale linearly toward
     # a full minute rather than a short exponential curve.
-    return min(15.0 * (attempt + 1), 60.0)
+    return min(15.0 * (attempt + 1), MAX_RATE_LIMIT_BACKOFF_SECONDS)
+
+
+def _provider_error_fields(exc: BaseException) -> dict[str, Any]:
+    """Safe-to-log facts about a provider error: exception type, HTTP status, error code.
+
+    Never the message, body, prompt or output -- provider errors can echo
+    request content (a tool_use_failed body includes the model's generation).
+    """
+    body = getattr(exc, "body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    status_code = getattr(exc, "status_code", None)
+    return {
+        "error_type": type(exc).__name__,
+        "provider_status": status_code if isinstance(status_code, int) else None,
+        "provider_error_code": code if isinstance(code, str) and _ERROR_CODE_PATTERN.fullmatch(code) else None,
+    }
+
+
+def _log_llm_failure(exc: BaseException, will_retry: bool, **fields: Any) -> None:
+    log_event(
+        logger,
+        "llm_request_failed",
+        logging.WARNING,
+        **_provider_error_fields(exc),
+        will_retry=will_retry,
+        **fields,
+    )
 
 
 def _invoke_with_retry(call: Callable[[], T], max_attempts: int = 5) -> T:
@@ -99,22 +158,29 @@ def _invoke_with_retry(call: Callable[[], T], max_attempts: int = 5) -> T:
     """
     from groq import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
+    # Only retries are logged here; the final failure is logged once by the
+    # caller (invoke_structured / invoke_with_retry), so it never appears twice.
     for attempt in range(max_attempts):
         try:
             return call()
         except RateLimitError as exc:
             if attempt == max_attempts - 1:
                 raise
-            time.sleep(_rate_limit_backoff_seconds(exc, attempt))
+            _sleep_before_retry(exc, attempt, _rate_limit_backoff_seconds(exc, attempt))
         except APIStatusError as exc:
             if exc.status_code != 413 or attempt == max_attempts - 1:
                 raise
-            time.sleep(_rate_limit_backoff_seconds(exc, attempt))
-        except (APITimeoutError, APIConnectionError):
+            _sleep_before_retry(exc, attempt, _rate_limit_backoff_seconds(exc, attempt))
+        except (APITimeoutError, APIConnectionError) as exc:
             if attempt == max_attempts - 1:
                 raise
-            time.sleep(min(2.0**attempt, 15.0))
+            _sleep_before_retry(exc, attempt, min(2.0**attempt, 15.0))
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _sleep_before_retry(exc: BaseException, attempt: int, delay_seconds: float) -> None:
+    _log_llm_failure(exc, True, call_attempt=attempt + 1, retry_in_ms=int(round(delay_seconds * 1000)))
+    time.sleep(delay_seconds)
 
 
 def _build_groq_llm(temperature: float, max_tokens: int) -> BaseChatModel:
@@ -160,7 +226,11 @@ def invoke_with_retry(call: Callable[[], T]) -> T:
     """Public retry wrapper for call sites that invoke the LLM directly
     (e.g. the Architecture Designer's tool-calling loop) rather than through
     invoke_structured."""
-    return _invoke_with_retry(call)
+    try:
+        return _invoke_with_retry(call)
+    except Exception as exc:
+        _log_llm_failure(exc, False)
+        raise
 
 
 def _is_tool_use_failure(exc: Exception) -> bool:
@@ -216,7 +286,9 @@ def invoke_structured(llm: BaseChatModel, schema: type[T], prompt: str, max_atte
             result = _invoke_with_retry(lambda: structured_llm.invoke(current_prompt))
         except Exception as exc:  # noqa: BLE001 - normalize any provider/parsing failure
             last_exc = exc
-            if _is_tool_use_failure(exc) and attempt < max_attempts - 1:
+            retry_tool_use = _is_tool_use_failure(exc) and attempt < max_attempts - 1
+            _log_llm_failure(exc, retry_tool_use, schema=schema.__name__, call_attempt=attempt + 1)
+            if retry_tool_use:
                 current_prompt = prompt + _tool_call_reinforcement(exc)
                 # A near-zero temperature is close to deterministic, so simply
                 # retrying the identical call tends to reproduce the exact
