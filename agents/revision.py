@@ -91,7 +91,10 @@ def run(state: ArchonState) -> dict:
         output_summary = "; ".join(revised.change_log[:3])
     except llm_module.LLMInvocationError as exc:
         revised = architecture
-        action = f"Revision call failed ({exc}); kept the previous architecture and re-submitted it to the critic."
+        action = (
+            f"Revision call failed ({llm_module.safe_failure_message(exc)}); "
+            "kept the previous architecture and re-submitted it to the critic."
+        )
         output_summary = "Revision failed -- architecture unchanged this round."
 
     entry = make_trace_entry(

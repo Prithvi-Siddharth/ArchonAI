@@ -173,6 +173,64 @@ def test_job_result_flags_max_revisions_reached(monkeypatch):
     assert result["critic_review"]["issues"][0]["severity"] == "high"  # enums serialize as plain strings
 
 
+def test_job_api_never_returns_provider_error_text_from_agent_fallbacks(monkeypatch, caplog):
+    """Critic, revision and report all fail with a tool_use_failed error carrying the
+    model's failed generation; the job still succeeds via the fallbacks, and neither
+    the stored result nor the API response contains any of the provider's text."""
+    from groq import APIStatusError
+
+    from models.schemas import Architecture, CriticReview, FinalReport
+
+    leaked = "LEAKED-FAILED-GENERATION"
+    body = {"error": {"message": "Failed to call a function.", "code": "tool_use_failed", "failed_generation": leaked}}
+    error = APIStatusError(
+        f"Error code: 400 - {body}", response=httpx.Response(400, request=_REQUEST), body=body
+    )
+    real_invoke_structured = llm_module.invoke_structured
+    _patch_llm(monkeypatch, critic_verdicts=[True])  # the critic always fails, so revisions run
+    mocked = llm_module.invoke_structured
+
+    class _Failing:
+        temperature = 0.2
+
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, prompt):
+            raise error
+
+        def model_copy(self, update):
+            return self
+
+    def invoke(llm, schema, prompt):
+        from graph.observability import current_node
+
+        failing = schema in (CriticReview, FinalReport) or current_node() == "architecture_revision"
+        if failing and not isinstance(llm, _Failing):
+            return real_invoke_structured(_Failing(), schema, prompt)
+        return mocked(llm, schema, prompt)
+
+    monkeypatch.setattr(llm_module, "invoke_structured", invoke)
+    monkeypatch.setattr(llm_module.time, "sleep", lambda s: None)
+
+    with caplog.at_level("INFO"):
+        response = client.get(f"{JOBS_URL}/{_submit()}")
+
+    data = response.json()
+    assert data["status"] == "succeeded"
+    assert leaked not in response.text and "Error code" not in response.text
+    actions = [entry["action"] for entry in data["result"]["execution_trace"]]
+    assert any("Critic review call failed (the model's structured answer was incomplete" in a for a in actions)
+    assert any(a.startswith("Revision call failed (") for a in actions)
+    assert any(a.startswith("LLM synthesis failed (") for a in actions)
+    # Internal logs keep the diagnostics (status, code, node, call id), still without the text.
+    failures = [r.event_fields for r in caplog.records if getattr(r, "event_fields", {}).get("event") == "llm_call_summary"
+                and r.event_fields.get("outcome") == "failure"]
+    assert {f["node"] for f in failures} == {"architecture_critic", "architecture_revision", "final_report"}
+    assert all(f["provider_status"] == 400 and f["provider_error_code"] == "tool_use_failed" and f["call_id"] for f in failures)
+    assert leaked not in caplog.text
+
+
 # --- Failures and retries ---------------------------------------------------------
 
 

@@ -217,6 +217,20 @@ class WorkflowError(RuntimeError):
     """Raised when the ArchonAI workflow fails to complete."""
 
 
+def _safe_workflow_error(exc: BaseException) -> str:
+    """WorkflowError text without the original exception's message.
+
+    A provider error's text can echo the prompt or carry the model's failed
+    generation. LLMInvocationError's own message is already safe; for
+    anything else only the type is kept. The full error stays chained as
+    __cause__ for classification (api/errors.py) and DEBUG-level tracebacks.
+    """
+    from agents.llm import LLMInvocationError
+
+    detail = str(exc) if isinstance(exc, LLMInvocationError) else type(exc).__name__
+    return f"ArchonAI workflow failed: {detail}"
+
+
 def run_workflow(user_request: str) -> ArchonState:
     """Run the full ArchonAI graph end-to-end for a user request.
 
@@ -244,7 +258,7 @@ def run_workflow(user_request: str) -> ArchonState:
             error_type=type(exc).__name__,
             duration_ms=elapsed_ms(start),
         )
-        raise WorkflowError(f"ArchonAI workflow failed: {exc}") from exc
+        raise WorkflowError(_safe_workflow_error(exc)) from exc
 
     log_event(
         logger,
@@ -279,4 +293,4 @@ def stream_workflow_updates(user_request: str):
             for node_name, partial_state in update.items():
                 yield node_name, partial_state
     except Exception as exc:  # noqa: BLE001 - normalize all graph failures for the UI
-        raise WorkflowError(f"ArchonAI workflow failed: {exc}") from exc
+        raise WorkflowError(_safe_workflow_error(exc)) from exc

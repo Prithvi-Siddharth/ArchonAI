@@ -11,9 +11,11 @@ from dataclasses import dataclass
 
 from celery.exceptions import SoftTimeLimitExceeded
 from fastapi import status
+import httpx
 from groq import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from langchain_core.exceptions import ModelConnectionError, ModelError, ModelRateLimitError, ModelTimeoutError
 
-from agents.llm import LLMInvocationError, MissingAPIKeyError
+from agents.llm import LLMInvocationError, MissingAPIKeyError, is_temporary_server_error
 
 
 @dataclass(frozen=True)
@@ -62,14 +64,18 @@ def classify_workflow_error(exc: BaseException) -> WorkflowFailure:
         return WorkflowFailure(status.HTTP_504_GATEWAY_TIMEOUT, "Job timed out.", False)
     if has(MissingAPIKeyError):
         return WorkflowFailure(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM provider is not configured.", False)
-    if has(RateLimitError) or any(isinstance(link, APIStatusError) and link.status_code == 413 for link in chain):
+    # Groq raises its SDK's errors; Gemini raises LangChain's provider-neutral
+    # Model*Error types (or raw httpx errors for network failures).
+    if has(RateLimitError, ModelRateLimitError) or any(isinstance(link, APIStatusError) and link.status_code == 413 for link in chain):
         return WorkflowFailure(
             status.HTTP_429_TOO_MANY_REQUESTS, "LLM provider rate limit reached. Please retry later.", True
         )
-    if has(APITimeoutError):
+    if has(APITimeoutError, ModelTimeoutError, httpx.TimeoutException):
         return WorkflowFailure(status.HTTP_504_GATEWAY_TIMEOUT, "LLM provider timed out. Please retry later.", True)
-    if has(APIConnectionError):
+    if has(APIConnectionError, ModelConnectionError, httpx.TransportError) or any(
+        isinstance(link, ModelError) and is_temporary_server_error(link) for link in chain
+    ):
         return WorkflowFailure(status.HTTP_502_BAD_GATEWAY, "LLM provider error. Please retry later.", True)
-    if has(LLMInvocationError, APIStatusError):
+    if has(LLMInvocationError, APIStatusError, ModelError):
         return WorkflowFailure(status.HTTP_502_BAD_GATEWAY, "LLM provider error. Please retry later.", False)
     return WorkflowFailure(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error.", False)

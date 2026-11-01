@@ -349,6 +349,28 @@ event=llm_request_failed job_id=3f2a… error_type=RateLimitError provider_statu
 event=llm_request_failed job_id=3f2a… error_type=BadRequestError provider_status=400 provider_error_code=tool_use_failed will_retry=false schema=AnalysisResult call_attempt=3
 ```
 
+Both also carry `call_id`, `model` and (failures) `max_tokens`, `sdk_retries` and
+`usage_available=false`, since providers report no usage for a failed request.
+
+Each logical LLM call (one agent's structured call, or one designer research round) ends with
+exactly one `llm_call_summary`, whether it succeeded or failed:
+
+```
+event=llm_call_summary job_id=3f2a… call_id=8e4ac47b0798 node=security_agent call_type=structured schema=AnalysisResult provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=7000 http_requests=5 sdk_retries=2 sdk_retry_wait_ms=4000 app_retries=1 app_retry_wait_ms=3000 tool_use_retries=1 llm_responses=1 input_tokens=800 output_tokens=300 reasoning_tokens=90 finish_reason=tool_calls usage_available=partial
+```
+
+| Field | Meaning |
+|---|---|
+| `http_requests` | Every HTTP request the call made, including failed ones |
+| `sdk_retries`, `sdk_retry_wait_ms` | Retries inside the Groq SDK, read from its `x-stainless-retry-count` request header, and the measured time between an attempt ending and its retry starting |
+| `app_retries`, `app_retry_wait_ms` | ArchonAI's own rate-limit/network retries and their measured sleep |
+| `tool_use_retries` | Corrective retries after an invalid structured answer (no wait) |
+| `input_tokens` … `reasoning_tokens` | Sums of the provider's reported usage -- never estimated |
+| `usage_available` | `true`: all usage reported; `partial`: a failed attempt (e.g. `tool_use_failed`, timeout) may have generated tokens the provider didn't report; `false`: none reported |
+
+Anything that can't be measured is logged as `unavailable` rather than guessed -- e.g. the
+HTTP/SDK fields with `LLM_PROVIDER=gemini`, whose HTTP traffic is not instrumented.
+
 Nodes are wrapped, not modified, so parallel nodes are timed independently, and every line
 logged during a job carries its `job_id`. Only metadata is logged -- never request text, LLM
 output, API keys, or exception messages (failures log `error_type` and `status_code`; full
@@ -535,7 +557,7 @@ archonai/
 │   ├── celery_app.py            # Celery app (Redis broker, retries, time limits)
 │   └── tasks.py                 # Celery task wrapping execute_job()
 ├── agents/                      # One module per graph node's LLM logic
-│   ├── llm.py                   # Modular LLM provider layer (Groq today, Bedrock-ready)
+│   ├── llm.py                   # LLM provider layer (Groq or Gemini; Bedrock-ready)
 │   ├── requirements.py / planner.py / architecture.py
 │   ├── compute.py / database.py / networking.py
 │   ├── security.py / reliability.py / cost.py
@@ -565,7 +587,7 @@ archonai/
 ### Prerequisites
 
 - Python 3.11+
-- A [Groq API key](https://console.groq.com/keys) (free tier available)
+- A [Groq API key](https://console.groq.com/keys) or a [Gemini API key](https://aistudio.google.com/apikey) (both have free tiers)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) -- for MySQL and Redis
   (needed by the job endpoints), or to run everything in containers
 
@@ -579,8 +601,12 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |----------|----------|--------------|
-| `GROQ_API_KEY` | Yes | Your Groq API key. Get one at https://console.groq.com/keys |
+| `LLM_PROVIDER` | No (defaults to `groq`) | Which LLM provider the agents use: `groq` or `gemini` |
+| `GROQ_API_KEY` | When using Groq | Your Groq API key. Get one at https://console.groq.com/keys |
 | `GROQ_MODEL` | No (defaults to `qwen/qwen3.8-27b`) | Must reliably honor forced tool-calling, since this app uses `with_structured_output` everywhere and real tool calls in the Architecture Designer. Groq's free-tier quotas are per-model (both a rolling tokens-per-minute limit and a separate tokens-per-day limit), so which model works best for you varies with what you've already used that day. Of the three tested during development, `openai/gpt-oss-120b` is the most reliable at structured output but has the lowest free-tier daily cap; `openai/gpt-oss-20b` occasionally mis-cases a tool name in a way Groq rejects. Groq's lineup changes over time -- list what's available to your key with `python -c "from groq import Groq; import os; [print(m.id) for m in Groq(api_key=os.environ['GROQ_API_KEY']).models.list().data]"` |
+| `GEMINI_API_KEY` | When using Gemini | Your Gemini API key. Get one at https://aistudio.google.com/apikey |
+| `GEMINI_MODEL` | No (defaults to `gemini-3.8-flash`) | Gemini model name, exactly as shown in AI Studio. The free tier is limited mainly by requests per day rather than tokens per minute, so a run is much faster than on Groq's free tier, but only a limited number of runs fit in a day |
+| `GEMINI_THINKING_LEVEL` | No (defaults to `low`) | `minimal`, `low`, `medium`, `high`, or `default`. Thinking tokens count toward each agent's output cap, so deep thinking can cut answers off |
 
 `.env` is git-ignored — never commit real credentials. `.env.example` contains placeholders
 only.

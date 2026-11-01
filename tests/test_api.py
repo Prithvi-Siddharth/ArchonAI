@@ -136,3 +136,31 @@ def test_rate_limit_wrapped_in_llm_invocation_error_is_still_a_retryable_429():
     assert failure.status_code == 429
     assert failure.retryable is True
     assert SECRET_DETAIL not in failure.message
+
+
+def _gemini(error_type_name: str, code: int, status: str) -> BaseException:
+    from .test_resilience import _gemini_error
+
+    return _gemini_error(error_type_name, code, status)
+
+
+@pytest.mark.parametrize(
+    ("make_exc", "expected_status", "expected_retryable"),
+    [
+        (lambda: _gemini("GoogleRateLimitError", 429, "RESOURCE_EXHAUSTED"), 429, True),
+        (lambda: _gemini("GoogleAPIError", 503, "UNAVAILABLE"), 502, True),
+        (lambda: _gemini("GoogleAuthenticationError", 401, "UNAUTHENTICATED"), 502, False),
+        (lambda: _gemini("GoogleInvalidRequestError", 400, "INVALID_ARGUMENT"), 502, False),
+        (lambda: httpx.ReadTimeout(SECRET_DETAIL), 504, True),
+        (lambda: httpx.ConnectError(SECRET_DETAIL), 502, True),
+    ],
+    ids=["gemini-rate-limit", "gemini-overloaded", "gemini-bad-key", "gemini-bad-request", "timeout", "connection"],
+)
+def test_gemini_failures_get_the_same_classification_as_groq(make_exc, expected_status, expected_retryable):
+    try:
+        raise llm_module.LLMInvocationError(SECRET_DETAIL) from make_exc()
+    except llm_module.LLMInvocationError as llm_error:
+        failure = classify_workflow_error(_wrapped(llm_error))
+
+    assert (failure.status_code, failure.retryable) == (expected_status, expected_retryable)
+    assert SECRET_DETAIL not in failure.message

@@ -43,25 +43,34 @@ Critic Review:
 {revision_note}
 
 Write the final report with these fields:
-- executive_summary: 3-5 sentences, for a non-technical stakeholder
+- executive_summary: for a non-technical stakeholder
 - requirements_summary: what was asked for, distilled
 - architecture_overview: how the pieces fit together
-- aws_services_summary: the services chosen and why, in prose
-- data_flow_summary: how a request flows through the system, in prose
+- aws_services_summary: the services chosen and why
+- data_flow_summary: how a request flows through the system
 - scalability_strategy: how this scales under load
 - high_availability_strategy: how this stays up during failures
 - security_summary: how this protects data and access
 - reliability_summary: fault tolerance and disaster recovery approach
 - observability_summary: how the system is monitored and debugged
-- cost_summary: cost posture, referencing the estimate given
-- bottlenecks: list of realistic potential bottlenecks
-- trade_offs: list of trade-offs made in this design
+- cost_summary: cost posture, quoting the estimated monthly range given
+- bottlenecks: realistic potential bottlenecks
+- trade_offs: trade-offs made in this design
 - critic_findings_summary: what the critic found and how it was resolved
 - final_recommendations: concrete next steps for a team implementing this
 
-Be concise: 2-4 sentences per prose field, short bullet phrases for lists. This report
-needs to be complete, not exhaustive.
+Hard size limits (the whole report must fit in a small output budget):
+- Every prose field: 1-2 sentences, at most 35 words in total.
+- bottlenecks, trade_offs, final_recommendations: at most 3 items each, at most 12 words per item.
+- Spend the words on specifics: name the actual AWS services, numbers (users, latency,
+  availability target, cost range) and mechanisms (e.g. multi-AZ, auto scaling, read
+  replicas, encryption) from the material. Leave out filler and restated headings.
 """
+
+# The hard limits above keep the report inside its max_tokens budget. Without
+# them, 12 prose fields at 2-4 sentences each need more tokens than the cap
+# allows, so the answer is cut off mid-tool-call and rejected as
+# tool_use_failed -- which then drops the run to _fallback_report.
 
 
 def run(state: ArchonState) -> dict:
@@ -110,7 +119,10 @@ def run(state: ArchonState) -> dict:
         # the structured data already gathered, instead of losing the whole
         # run's work over one failed synthesis call.
         report = _fallback_report(requirements, architecture, cost, review, revision_note)
-        action = f"LLM synthesis failed ({exc}); assembled a fallback report directly from agent outputs."
+        action = (
+            f"LLM synthesis failed ({llm_module.safe_failure_message(exc)}); "
+            "assembled a fallback report directly from agent outputs."
+        )
 
     entry = make_trace_entry(
         node="Final Report",
