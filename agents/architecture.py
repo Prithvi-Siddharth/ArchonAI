@@ -9,14 +9,41 @@ so service selection is grounded in real service data instead of guesswork.
 
 from __future__ import annotations
 
+import logging
+from typing import Optional
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agents import llm as llm_module
+from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import Architecture, ArchitecturePlan, Requirements
 from tools.aws_service_search import search_aws_services_tool
 
+logger = logging.getLogger(__name__)
+
 MAX_TOOL_ROUNDS = 2
+
+RESEARCH_TEMPERATURE = 0.2
+# One corrective retry after a tool_use_failed, sampled a little hotter (the
+# same +0.25 nudge invoke_structured uses) so it doesn't just repeat the
+# same malformed tool call.
+RESEARCH_RETRY_TEMPERATURE = 0.45
+RESEARCH_MAX_TOKENS = 512
+
+RESEARCH_CORRECTION = (
+    "Your previous reply was rejected because it was not a valid tool call. "
+    "Call search_aws_services_tool with exactly one string argument named 'query' "
+    "(one short keyword per call), or reply without any tool call if you have enough information."
+)
+
+# What the design prompt gets as its research section when the search step
+# failed: the research is optional, so the design goes ahead without it.
+NO_RESEARCH_NOTE = (
+    "No research is available: the AWS service search step failed. "
+    "Choose well-known AWS services from general knowledge."
+)
+RESEARCH_STOPPED_NOTE = "(Research stopped early: a later AWS service search failed.)"
 
 # Hard cap on the accumulated research text embedded in the design prompt.
 # The AWS search tool already caps how many services one call can return,
@@ -73,13 +100,63 @@ This is a working design document, not a narrative report.
 # validator (tools/architecture_validator.py) looks for.
 
 
-def _run_tool_calling_research(requirements: Requirements, plan: ArchitecturePlan) -> str:
+def _log_research_failure(
+    exc: BaseException, round_number: int, retry_succeeded: bool, fallback_used: bool, notes_kept: int
+) -> None:
+    """Only safe facts (type, HTTP status, error code) -- never the provider's
+    message or failed_generation, which echo the model's output."""
+    log_event(
+        logger,
+        "research_call_failed",
+        logging.WARNING,
+        **llm_module._provider_error_fields(exc),
+        error_category="tool_use_failed",
+        round=round_number,
+        corrective_retry_attempted=True,
+        corrective_retry_succeeded=retry_succeeded,
+        fallback_used=fallback_used,
+        research_notes_kept=notes_kept,
+    )
+
+
+def _corrective_research_retry(
+    messages: list, first_exc: BaseException, round_number: int, notes_kept: int
+) -> Optional[AIMessage]:
+    """Retry a research call that failed with tool_use_failed, exactly once.
+
+    Returns the response, or None if the retry also failed with
+    tool_use_failed (the caller then stops researching). Any other error is
+    raised unchanged -- only a malformed tool call is recoverable here.
+    """
+    retry_llm = llm_module.get_llm(
+        temperature=RESEARCH_RETRY_TEMPERATURE, max_tokens=RESEARCH_MAX_TOKENS
+    ).bind_tools([search_aws_services_tool])
+    # The correction is sent with this one call only, not kept in the history.
+    retry_messages = [*messages, HumanMessage(content=RESEARCH_CORRECTION)]
+    try:
+        response: AIMessage = llm_module.invoke_with_retry(lambda: retry_llm.invoke(retry_messages))
+    except Exception as retry_exc:
+        if not llm_module._is_tool_use_failure(retry_exc):
+            raise
+        _log_research_failure(first_exc, round_number, retry_succeeded=False, fallback_used=True, notes_kept=notes_kept)
+        return None
+    _log_research_failure(first_exc, round_number, retry_succeeded=True, fallback_used=False, notes_kept=notes_kept)
+    return response
+
+
+def _run_tool_calling_research(requirements: Requirements, plan: ArchitecturePlan) -> tuple[str, bool]:
     """Let the LLM search the AWS knowledge base via real tool calls.
 
-    Returns the accumulated research notes as text, to be fed into the final
-    structured-output design call.
+    Returns (research notes as text, fallback_used). The notes feed the final
+    structured-output design call. The research is optional: if a search
+    call fails with tool_use_failed (a malformed tool call) and its one
+    corrective retry fails the same way, researching stops, the notes
+    gathered so far are kept, and fallback_used is True. Any other error
+    propagates as before.
     """
-    llm_with_tools = llm_module.get_llm(temperature=0.2, max_tokens=512).bind_tools([search_aws_services_tool])
+    llm_with_tools = llm_module.get_llm(
+        temperature=RESEARCH_TEMPERATURE, max_tokens=RESEARCH_MAX_TOKENS
+    ).bind_tools([search_aws_services_tool])
     messages: list = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(
@@ -94,8 +171,18 @@ def _run_tool_calling_research(requirements: Requirements, plan: ArchitecturePla
     ]
 
     research_notes: list[str] = []
-    for _ in range(MAX_TOOL_ROUNDS):
-        response: AIMessage = llm_module.invoke_with_retry(lambda: llm_with_tools.invoke(messages))
+    fallback_used = False
+    for round_number in range(1, MAX_TOOL_ROUNDS + 1):
+        try:
+            response: AIMessage = llm_module.invoke_with_retry(lambda: llm_with_tools.invoke(messages))
+        except Exception as exc:
+            if not llm_module._is_tool_use_failure(exc):
+                raise
+            retried = _corrective_research_retry(messages, exc, round_number, len(research_notes))
+            if retried is None:
+                fallback_used = True
+                break
+            response = retried
         messages.append(response)
         tool_calls = getattr(response, "tool_calls", None) or []
         if not tool_calls:
@@ -105,10 +192,14 @@ def _run_tool_calling_research(requirements: Requirements, plan: ArchitecturePla
             research_notes.append(f"Query '{call['args'].get('query', '')}':\n{result}")
             messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
 
+    if fallback_used and not research_notes:
+        return NO_RESEARCH_NOTE, True
     combined = "\n\n".join(research_notes) if research_notes else "No tool searches were made."
     if len(combined) > MAX_RESEARCH_CHARS:
         combined = combined[:MAX_RESEARCH_CHARS] + "\n...(truncated)"
-    return combined
+    if fallback_used:
+        combined += "\n\n" + RESEARCH_STOPPED_NOTE
+    return combined, fallback_used
 
 
 def run(state: ArchonState) -> dict:
@@ -116,7 +207,7 @@ def run(state: ArchonState) -> dict:
     requirements: Requirements = state["requirements"]
     plan: ArchitecturePlan = state["architecture_plan"]
 
-    research = _run_tool_calling_research(requirements, plan)
+    research, research_fallback = _run_tool_calling_research(requirements, plan)
 
     llm = llm_module.get_llm(temperature=0.3, max_tokens=llm_module.ARCHITECTURE_MAX_TOKENS)
     prompt = DESIGN_PROMPT_TEMPLATE.format(
@@ -127,12 +218,15 @@ def run(state: ArchonState) -> dict:
     architecture = llm_module.invoke_structured(llm, Architecture, prompt)
     architecture.version = 1
 
+    action = (
+        f"Searched the AWS service knowledge base and designed the initial "
+        f"architecture with {len(architecture.services)} services."
+    )
+    if research_fallback:
+        action += " The AWS service search failed, so the design used only the research gathered before it."
     entry = make_trace_entry(
         node="Architecture Designer",
-        action=(
-            f"Searched the AWS service knowledge base and designed the initial "
-            f"architecture with {len(architecture.services)} services."
-        ),
+        action=action,
         output_summary=", ".join(s.name for s in architecture.services),
     )
     return {"architecture": architecture, "execution_trace": [entry]}
