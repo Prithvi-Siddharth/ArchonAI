@@ -48,6 +48,14 @@ bottlenecks, security weaknesses, networking problems, inappropriate service
 selection, unnecessary complexity, cost problems, missing components, and any
 violation of the stated requirements.
 
+Requirement provenance: in the requirements, explicit_requirements are what the user
+actually asked for; inferred_assumptions are the analyst's assumptions, not user
+requirements. Severity rules:
+- critical: violates an explicit user requirement, is a confirmed validator finding, or is
+  a concrete, named risk of data loss, a security breach or an outage at the stated load.
+- An unmet inferred assumption or an optional best practice (e.g. multi-region deployment
+  when the user did not ask for it) is at most medium, and on its own must not block approval.
+
 Any unresolved CRITICAL deterministic validator finding must result in approved=false.
 Score the architecture from 0-100. Only approve (approved=true) if the score is 80 or
 higher AND there are no critical issues. List concrete required_changes for anything
@@ -133,4 +141,5 @@ def run(state: ArchonState) -> dict:
         output_summary=output_summary,
         iteration=state.get("revision_count", 0),
     )
-    return {"critic_review": review, "execution_trace": [entry]}
+    # critic_history accumulates every round (the revision agent reads it all).
+    return {"critic_review": review, "critic_history": [review], "execution_trace": [entry]}

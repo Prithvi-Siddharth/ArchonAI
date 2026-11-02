@@ -22,6 +22,13 @@ describe those qualitatively instead.
 For traffic_pattern, you must pick exactly one of these four literal values --
 do not paraphrase or combine them: steady, spiky, seasonal, unpredictable.
 
+Keep what the user asked for separate from what you assumed:
+- explicit_requirements: only what the user actually stated (at most 6, each at most 12 words).
+- inferred_assumptions: everything you inferred instead (at most 5, each at most 12 words),
+  e.g. a numeric uptime target or multi-region redundancy the user never mentioned.
+- Do not upgrade a stated requirement into a stronger one in the other fields (e.g. do not
+  turn "high availability" into "multi-region"); if you assume more, list it as inferred.
+
 User request:
 \"\"\"
 {user_request}

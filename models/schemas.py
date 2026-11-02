@@ -69,6 +69,21 @@ class Requirements(BaseModel):
         default="Not specified",
         description="Any stated budget constraints or cost sensitivity.",
     )
+    # Provenance: what the user actually asked for vs what the analyst
+    # assumed. Downstream, only explicit requirements (or concrete technical
+    # risk) may justify a critical, approval-blocking issue. Defaults keep
+    # older stored results and callers valid.
+    explicit_requirements: list[str] = Field(
+        default_factory=list,
+        description="Requirements the user actually stated, closely paraphrased. At most 6, each at most 12 words.",
+    )
+    inferred_assumptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Assumptions inferred rather than stated by the user (e.g. an uptime target "
+            "or multi-region redundancy). At most 5, each at most 12 words."
+        ),
+    )
 
 
 class ArchitecturePlan(BaseModel):

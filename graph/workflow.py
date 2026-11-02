@@ -21,7 +21,7 @@ per-minute ceiling.
         -> validator (deterministic tool)
         -> critic (LLM judge)
              -> approved         -> final_report -> END
-             -> rejected         -> revision -> critic (loop)
+             -> rejected         -> revision -> validator -> critic (loop)
              -> max_revisions    -> final_report -> END
 """
 
@@ -196,7 +196,9 @@ def build_graph():
             "rejected": ARCHITECTURE_REVISION,
         },
     )
-    graph.add_edge(ARCHITECTURE_REVISION, ARCHITECTURE_CRITIC)
+    # Every revised architecture is re-validated before the critic sees it, so
+    # validation_results always describes the latest version (not v1).
+    graph.add_edge(ARCHITECTURE_REVISION, ARCHITECTURE_VALIDATOR)
     graph.add_edge(FINAL_REPORT, END)
 
     return graph.compile()

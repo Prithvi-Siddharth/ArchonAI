@@ -52,6 +52,13 @@ class ArchonState(TypedDict, total=False):
 
     validation_results: Optional[ValidationResult]
     critic_review: Optional[CriticReview]
+    # Every critic review so far, oldest first (critic_review is only the
+    # latest). The revision agent needs the whole history so a later round
+    # can't silently undo what an earlier round asked for.
+    critic_history: Annotated[list[CriticReview], operator.add]
+    # Every accepted revision's change_log entries, oldest first, as
+    # "v<version>: <entry>" -- the fixes later revisions must preserve.
+    implemented_changes: Annotated[list[str], operator.add]
 
     revision_count: int
     # Multiple parallel branches (compute/database/networking, then
@@ -86,6 +93,8 @@ def create_initial_state(user_request: str) -> ArchonState:
         cost_analysis=None,
         validation_results=None,
         critic_review=None,
+        critic_history=[],
+        implemented_changes=[],
         revision_count=0,
         execution_trace=[],
         final_report=None,
