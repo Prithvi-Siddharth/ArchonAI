@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 
 class TrafficPattern(str, Enum):
@@ -222,3 +223,11 @@ class FinalReport(BaseModel):
     trade_offs: list[str]
     critic_findings_summary: str
     final_recommendations: list[str]
+    # Filled deterministically by the report agent, never by the LLM (hidden
+    # from the structured-output schema): critic requests and proposed
+    # changes that are NOT in the final architecture. Defaults to empty so
+    # stored results from before this field still load.
+    open_recommendations: SkipJsonSchema[list[str]] = Field(
+        default_factory=list,
+        description="Requested or proposed changes that the final architecture does not contain.",
+    )

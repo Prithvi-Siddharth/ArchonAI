@@ -29,7 +29,9 @@ def compact_analysis(analysis: AnalysisResult, max_reasoning_chars: int = 300) -
     return f"{analysis.domain} -- Recommendations: {recommendations}. Risks: {risks}. Reasoning: {reasoning}"
 
 
-def compact_architecture(architecture: Architecture, max_field_chars: int = 150) -> str:
+def compact_architecture(
+    architecture: Architecture, max_field_chars: int = 150, include_change_log: bool = True
+) -> str:
     """Render an Architecture as a short, bounded-length text block."""
     lines = [
         f"Summary (v{architecture.version}): {_truncate(architecture.summary, 300)}",
@@ -46,7 +48,7 @@ def compact_architecture(architecture: Architecture, max_field_chars: int = 150)
             lines.append(
                 f"{step.step}. {step.source} -> {step.destination}: {_truncate(step.description, max_field_chars)}"
             )
-    if architecture.change_log:
+    if include_change_log and architecture.change_log:
         lines.append("Change log: " + "; ".join(architecture.change_log[:5]))
     return "\n".join(lines)
 

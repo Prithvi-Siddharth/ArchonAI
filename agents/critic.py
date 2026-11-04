@@ -9,8 +9,12 @@ for revision.
 
 from __future__ import annotations
 
+import hashlib
+import logging
+
 from agents import llm as llm_module
 from agents.formatting import compact_analysis, compact_architecture, compact_cost_analysis
+from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import (
     AnalysisResult,
@@ -21,6 +25,8 @@ from models.schemas import (
     Severity,
     ValidationResult,
 )
+
+logger = logging.getLogger(__name__)
 
 PROMPT_TEMPLATE = """You are a principal cloud architect acting as a critical reviewer.
 Your job is to find real problems, not to rubber-stamp the design. Compare the proposed
@@ -55,6 +61,10 @@ requirements. Severity rules:
   a concrete, named risk of data loss, a security breach or an outage at the stated load.
 - An unmet inferred assumption or an optional best practice (e.g. multi-region deployment
   when the user did not ask for it) is at most medium, and on its own must not block approval.
+
+Service budget: the design may use at most 8 service entries, and closely related services
+can share one entry (e.g. "Amazon ElastiCache (Redis) + Amazon DynamoDB"). Request a new
+service only when no existing entry can cover the need.
 
 Any unresolved CRITICAL deterministic validator finding must result in approved=false.
 Score the architecture from 0-100. Only approve (approved=true) if the score is 80 or
@@ -111,11 +121,43 @@ def run(state: ArchonState) -> dict:
         validation_issues=_format_validation_issues(validation_results),
     )
 
+    # The prompt is the critic's entire input. If it is byte-for-byte the one
+    # the last successful review was given -- e.g. a revision was rejected
+    # and the architecture kept unchanged -- the answer can't legitimately
+    # differ, so reuse that review instead of paying for the call again.
+    # Any change at all (architecture, validator findings, analyses) changes
+    # the fingerprint and gets a fresh review.
+    fingerprint = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    previous: CriticReview | None = state.get("critic_review")
+    if previous is not None and state.get("critic_input_hash") == fingerprint:
+        log_event(
+            logger,
+            "critic_review_reused",
+            architecture_version=architecture.version,
+            score=previous.score,
+            approved=previous.approved,
+        )
+        entry = make_trace_entry(
+            node="Architecture Critic",
+            action=(
+                f"Architecture v{architecture.version} and its review context are unchanged since the last "
+                "review; reused that review instead of reviewing it again."
+            ),
+            output_summary=(
+                f"{'APPROVED' if previous.approved else 'REJECTED'} | score={previous.score} | "
+                f"issues={len(previous.issues)} (reused)"
+            ),
+            iteration=state.get("revision_count", 0),
+        )
+        # Not a new review, so critic_history is left as it is.
+        return {"critic_review": previous, "execution_trace": [entry]}
+
     try:
         review = llm_module.invoke_structured(llm, CriticReview, prompt)
         verdict = "APPROVED" if review.approved else "REJECTED"
         action = f"Reviewed architecture v{architecture.version} against requirements and validator findings."
         output_summary = f"{verdict} | score={review.score} | issues={len(review.issues)}"
+        input_hash: str | None = fingerprint
     except llm_module.LLMInvocationError as exc:
         # The critic LLM call itself failed (e.g. an outlasted rate limit).
         # Fail toward "needs more work" rather than crashing the run -- the
@@ -134,6 +176,7 @@ def run(state: ArchonState) -> dict:
         )
         action = f"Critic review call failed ({reason}); treated as rejected for this round."
         output_summary = "Critic call failed -- treated as rejected."
+        input_hash = None  # a stand-in verdict is never reused
 
     entry = make_trace_entry(
         node="Architecture Critic",
@@ -142,4 +185,9 @@ def run(state: ArchonState) -> dict:
         iteration=state.get("revision_count", 0),
     )
     # critic_history accumulates every round (the revision agent reads it all).
-    return {"critic_review": review, "critic_history": [review], "execution_trace": [entry]}
+    return {
+        "critic_review": review,
+        "critic_history": [review],
+        "critic_input_hash": input_hash,
+        "execution_trace": [entry],
+    }

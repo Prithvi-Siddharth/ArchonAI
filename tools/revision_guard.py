@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 
 from models.schemas import Architecture, Requirements
+from tools.architecture_facts import mentions, service_aliases
 from tools.architecture_validator import (
     _AUTOSCALING_TERMS,
     _BACKUP_TERMS,
@@ -66,7 +67,7 @@ CAPABILITIES: dict[str, tuple[str, list[str]]] = {
         ],
     ),
     "RTO/RPO targets": (DISASTER_RECOVERY, ["rto", "rpo"]),
-    "database backups": (BACKUPS, _BACKUP_TERMS),
+    "database backups": (BACKUPS, _BACKUP_TERMS),  # plural-tolerant: "backups" counts
     "private subnets": (NETWORKING, ["private subnet", "private subnets"]),
     "per-AZ NAT gateways": (
         NETWORKING,
@@ -129,25 +130,43 @@ class Regression:
 
 
 def _mentions(text: str, term: str) -> bool:
-    """`term` appears in `text` as a whole word/phrase (so 'rto' doesn't match 'proto')."""
-    return re.search(rf"(?<![a-z0-9]){re.escape(term.lower())}(?![a-z0-9])", text) is not None
+    """Whole word/phrase, ignoring hyphens and plurals: 'rto' doesn't match
+    'protocol', 'backup' matches 'backups' (tools/architecture_facts.py)."""
+    return mentions(text, term)
 
 
 def _has_capability(text: str, terms: list[str]) -> bool:
     return any(_mentions(text, term) for term in terms)
 
 
-def _service_components(architecture: Architecture) -> list[str]:
-    """Individual services, splitting combined entries like 'Amazon CloudFront + AWS WAF'."""
-    components: list[str] = []
+_QUALIFIERS = re.compile(r"^(multi-?\s?az|single-?\s?az|serverless|provisioned|on-demand|global)$")
+
+
+def _service_components(architecture: Architecture) -> list[tuple[str, list[str]]]:
+    """Individual services with every name they may appear under.
+
+    Splits combined entries ('Amazon CloudFront + AWS WAF'). A bracketed
+    engine/variant is an alias, not a separate service: 'Amazon ElastiCache
+    (Redis)' -> ('elasticache', [elasticache, redis, memcached, valkey]),
+    'Amazon RDS (Aurora)' -> ('rds', [rds, aurora, ...]). Deployment
+    qualifiers like '(Multi-AZ)' are dropped (they're checked as capabilities).
+    """
+    components: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
     for service in architecture.services:
-        # "Amazon RDS (Multi-AZ)" -> "rds"; deployment qualifiers aren't services
-        # (they're checked as capabilities instead).
-        name_text = re.sub(r"\([^)]*\)|\bmulti-az\b|\bmulti az\b", " ", service.name.lower())
+        lowered = service.name.lower()
+        brackets = [b.strip() for b in re.findall(r"\(([^)]*)\)", lowered)]
+        bracket_aliases = [b for b in brackets if b and not _QUALIFIERS.match(b)]
+        name_text = re.sub(r"\([^)]*\)|\bmulti-az\b|\bmulti az\b", " ", lowered)
         for part in re.split(r"\s*(?:\+|,|&|/|\band\b)\s*", name_text):
             name = _SERVICE_PREFIX.sub("", " ".join(part.split()))
-            if name and name not in components:
-                components.append(name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            aliases = service_aliases(name)
+            for alias in bracket_aliases:
+                aliases.extend(a for a in service_aliases(alias) if a not in aliases)
+            components.append((name, aliases))
     return components
 
 
@@ -181,14 +200,16 @@ def check_revision(
     prior_required_changes = prior_required_changes or []
     regressions: list[Regression] = []
 
-    for service in _service_components(previous):
-        if not _mentions(after, service):
+    for service, aliases in _service_components(previous):
+        # Present under any of its names (ElastiCache as "Redis", RDS as
+        # "Aurora") means renamed, not removed.
+        if not any(_mentions(after, alias) for alias in aliases):
             regressions.append(
                 Regression(
                     kind="removed_service",
                     category=SERVICES,
                     item=service,
-                    justification=_justification(change_log, [service]),
+                    justification=_justification(change_log, aliases),
                 )
             )
 

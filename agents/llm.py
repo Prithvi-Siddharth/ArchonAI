@@ -834,10 +834,36 @@ def _tool_use_failure_detail(exc: Exception) -> str:
     return "The response was not a valid call to the required tool."
 
 
-def _tool_call_reinforcement(exc: Exception) -> str:
+# A common cause of tool_use_failed is an answer cut off at max_tokens --
+# and a retry that asks for the same amount of output is cut off again. So
+# the correction asks for a substantially shorter answer. Only the specialist
+# analyses (AnalysisResult) are told to drop items: for other schemas, fewer
+# items could mean dropping something essential (e.g. a service from an
+# Architecture), so they keep their items and shorten each one.
+_SHORTER_ANALYSIS = (
+    "Make this response substantially shorter than your previous one: return fewer "
+    "recommendations and fewer risks, make every item shorter, and keep reasoning to "
+    "one or two brief sentences."
+)
+_SHORTER_GENERIC = (
+    "Make this response substantially shorter than your previous one: keep the same "
+    "items, but make every text value shorter, and keep any reasoning or narrative "
+    "text to one or two brief sentences."
+)
+
+
+def _tool_call_reinforcement(exc: Exception, schema: Optional[type[BaseModel]] = None) -> str:
+    from models.schemas import AnalysisResult
+
+    shorter = _SHORTER_ANALYSIS if schema is AnalysisResult else _SHORTER_GENERIC
+    schema_name = schema.__name__ if schema is not None else "required"
     return (
         "\n\nIMPORTANT: Your previous attempt was rejected with this exact error: "
         f"{_tool_use_failure_detail(exc)}\n"
+        "The response may have been too long and cut off. "
+        f"{shorter}\n"
+        f"Follow the {schema_name} schema exactly -- the same fields, with valid values -- "
+        "and return valid structured output. "
         "Call the required structured-output tool again with a corrected response "
         "that fixes this specific error. Respond ONLY via that tool call -- no prose, "
         "no markdown, no commentary outside of it."
@@ -872,7 +898,7 @@ def _invoke_structured(llm: BaseChatModel, schema: type[T], prompt: str, max_att
             _log_llm_failure(exc, retry_tool_use, schema=schema.__name__, call_attempt=attempt + 1)
             if retry_tool_use:
                 stats.tool_use_retries += 1
-                current_prompt = prompt + _tool_call_reinforcement(exc)
+                current_prompt = prompt + _tool_call_reinforcement(exc, schema)
                 # A near-zero temperature is close to deterministic, so simply
                 # retrying the identical call tends to reproduce the exact
                 # same invalid output. Nudge sampling up on each retry so the

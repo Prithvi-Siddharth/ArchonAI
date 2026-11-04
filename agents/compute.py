@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from agents import llm as llm_module
 from agents.formatting import compact_architecture
+from agents.specialist_prompt import SPECIALIST_OUTPUT_LIMITS
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import AnalysisResult, Architecture, Requirements
 
@@ -27,8 +28,7 @@ Analyze the compute portion of this architecture. Specifically address:
 - Availability of the compute layer (single instance vs. distributed)
 - Likely compute bottlenecks under the stated load
 
-Return concrete recommendations, your reasoning, and any risks. Be concise: keep reasoning to 2-3 sentences, and limit recommendations/risks to short bullet phrases, not paragraphs.
-"""
+""" + SPECIALIST_OUTPUT_LIMITS
 
 
 def run(state: ArchonState) -> dict:

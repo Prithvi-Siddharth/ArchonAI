@@ -16,6 +16,15 @@ from agents.formatting import _truncate, compact_architecture
 from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import Architecture, CriticReview, Requirements, ValidationResult
+from tools.architecture_facts import (
+    IMPLEMENTED,
+    NOT_IMPLEMENTED_PREFIX,
+    PROPOSED,
+    REMOVED,
+    ChangeCheck,
+    pending_requests,
+    verify_changes,
+)
 from tools.revision_guard import Regression, blocking, check_revision
 
 logger = logging.getLogger(__name__)
@@ -38,8 +47,12 @@ Current Architecture (version {version}):
 Critic review history, oldest first (earlier rounds' required changes still apply):
 {review_history}
 
-Previously implemented changes (already in the current architecture -- preserve them):
+Previously implemented changes (verified present in the current architecture -- preserve them):
 {implemented_changes}
+
+Still pending -- requested or proposed earlier but NOT in the current architecture. Do not
+assume these exist; implement them now if they are still required:
+{pending_changes}
 
 Outstanding issues to fix now (latest review of version {version}):
 - Score: {score}/100
@@ -64,12 +77,18 @@ Preserve earlier fixes -- no regressions:
   fix unless the conflict is real, and explain the choice in change_log.
 
 Hard size limits (the whole response must fit in a small output budget):
-- At most 7 services total. Combine closely related services into one entry
-  (e.g. "Amazon CloudFront + AWS WAF").
+- At most 7 services. Combine closely related services into one entry
+  (e.g. "Amazon CloudFront + AWS WAF", "Amazon ElastiCache (Redis) + Amazon DynamoDB").
+- If a required change needs a new service that cannot share an entry, an 8th service is
+  allowed: add it, say why in change_log ("Added <X> as an 8th service because <reason>"),
+  and keep data_flow to at most 5 steps. Never remove an essential service just to stay
+  under the count.
 - At most 6 data_flow steps, covering only the main request path.
 - Summary: one sentence, at most 30 words.
 - Each purpose/justification/description/change_log entry: one sentence, at most 12 words.
-- change_log: only the changes that were actually needed, at most 5 entries.
+- change_log: only the changes that were actually needed, at most 5 entries. Every service
+  or capability a change_log entry names must appear in the services or data_flow above --
+  a change that is only described in change_log does not count as implemented.
 
 Keep key properties explicit in the text where they apply, using these exact terms:
 multi-AZ, auto scaling, load balancer, backups, encryption, private subnet.
@@ -98,6 +117,7 @@ strategy) must be fixed, not justified.
 _MAX_HISTORY_REVIEWS = 4
 _MAX_IMPLEMENTED_CHANGES = 10
 _MAX_ITEM_CHARS = 160
+_MAX_PENDING = 6
 
 
 def _format_issues(review: CriticReview) -> str:
@@ -123,6 +143,53 @@ def _format_implemented_changes(changes: list[str]) -> str:
     return "\n".join(f"- {_truncate(c, _MAX_ITEM_CHARS)}" for c in changes[-_MAX_IMPLEMENTED_CHANGES:])
 
 
+def _format_pending(items: list[str]) -> str:
+    if not items:
+        return "None."
+    return "\n".join(f"- {_truncate(i, _MAX_ITEM_CHARS)}" for i in items[:_MAX_PENDING])
+
+
+def _still_pending(history: list[CriticReview], architecture: Architecture) -> list[str]:
+    """Earlier critic requests and claimed-but-absent changes the current design still lacks.
+
+    The latest review's required changes are already listed as outstanding,
+    so only earlier rounds are checked here.
+    """
+    earlier = [change for past in history[:-1] for change in past.required_changes]
+    pending = pending_requests(earlier, architecture)
+    for check in verify_changes(architecture.change_log, architecture):
+        if check.status == PROPOSED:
+            item = check.entry.removeprefix(NOT_IMPLEMENTED_PREFIX)
+            if item not in pending:
+                pending.append(item)
+    return pending
+
+
+def _record_verified_changes(revised: Architecture) -> tuple[list[str], list[ChangeCheck]]:
+    """Check every change_log entry against the revised design itself.
+
+    Only verified entries become implemented_changes; an entry naming a
+    service or capability the design doesn't contain is marked as proposed
+    in the change_log (so neither the critic, the report nor the next
+    revision mistakes it for part of the design).
+    """
+    checks = verify_changes(revised.change_log, revised)
+    version = revised.version
+    implemented: list[str] = []
+    change_log: list[str] = []
+    for check in checks:
+        entry = check.entry
+        if check.status == IMPLEMENTED:
+            implemented.append(f"v{version}: {entry}")
+        elif check.status == REMOVED:
+            implemented.append(f"v{version} (intentional removal): {entry}")
+        elif check.status == PROPOSED and not entry.startswith(NOT_IMPLEMENTED_PREFIX):
+            entry = NOT_IMPLEMENTED_PREFIX + entry
+        change_log.append(entry)
+    revised.change_log = change_log
+    return implemented, checks
+
+
 def _format_validator_findings(validation: ValidationResult | None) -> str:
     if validation is None or not validation.issues:
         return "none."
@@ -133,8 +200,16 @@ def _format_regressions(regressions: list[Regression]) -> str:
     return "\n".join(f"- {r.describe()}" for r in regressions)
 
 
-def _log_check(regressions: list[Regression], corrected: bool, accepted: bool) -> None:
+def _log_check(
+    regressions: list[Regression], corrected: bool, accepted: bool, checks: list[ChangeCheck] | None = None
+) -> None:
     unjustified = blocking(regressions)
+    counts = {}
+    if checks is not None:
+        counts = {
+            f"changes_{status}": sum(1 for c in checks if c.status == status)
+            for status in ("implemented", "proposed", "removed", "unverified")
+        }
     log_event(
         logger,
         "revision_checked",
@@ -144,6 +219,7 @@ def _log_check(regressions: list[Regression], corrected: bool, accepted: bool) -
         categories=",".join(sorted({r.category for r in unjustified})) or None,
         corrected=corrected,
         accepted=accepted,
+        **counts,
     )
 
 
@@ -173,6 +249,7 @@ def run(state: ArchonState) -> dict:
         architecture=compact_architecture(architecture),
         review_history=_format_review_history(history),
         implemented_changes=_format_implemented_changes(implemented),
+        pending_changes=_format_pending(_still_pending(history, architecture)),
         score=review.score,
         required_changes="; ".join(review.required_changes) or "None explicitly listed.",
         issues=_format_issues(review),
@@ -197,9 +274,9 @@ def run(state: ArchonState) -> dict:
                 )
             )
         unjustified = blocking(regressions)
-        _log_check(regressions, corrected, accepted=not unjustified)
 
         if unjustified:
+            _log_check(regressions, corrected, accepted=False)
             # Accepting it would undo earlier work; keep the current version and
             # let the critic review it again (same fallback as a failed call).
             listed = "; ".join(r.describe() for r in unjustified[:3])
@@ -214,13 +291,21 @@ def run(state: ArchonState) -> dict:
             revised.version = architecture.version + 1
             if not revised.change_log:
                 revised.change_log = list(review.required_changes)
-            newly_implemented = [f"v{revised.version}: {entry}" for entry in revised.change_log]
+            newly_implemented, checks = _record_verified_changes(revised)
+            _log_check(regressions, corrected, accepted=True, checks=checks)
             justified = [r for r in regressions if r.justified]
             action = f"Revised architecture to v{revised.version}, addressing {len(review.required_changes)} required changes."
             if corrected:
                 action += " A first attempt removed earlier fixes and was corrected."
             if justified:
                 action += " Justified removals: " + "; ".join(r.item for r in justified[:4]) + "."
+            proposed = sum(1 for c in checks if c.status == PROPOSED)
+            unverified = sum(1 for c in checks if c.status not in (IMPLEMENTED, REMOVED, PROPOSED))
+            action += (
+                f" Change log verified against the design: {len(newly_implemented)} implemented or removed, "
+                f"{proposed} proposed only (not in the design)"
+                + (f", {unverified} could not be checked." if unverified else ".")
+            )
             output_summary = "; ".join(revised.change_log[:3])
     except llm_module.LLMInvocationError as exc:
         revised = architecture

@@ -59,6 +59,9 @@ class ArchonState(TypedDict, total=False):
     # Every accepted revision's change_log entries, oldest first, as
     # "v<version>: <entry>" -- the fixes later revisions must preserve.
     implemented_changes: Annotated[list[str], operator.add]
+    # Fingerprint of the last *successful* critic review's full input; lets
+    # the critic reuse that review when nothing it looks at has changed.
+    critic_input_hash: Optional[str]
 
     revision_count: int
     # Multiple parallel branches (compute/database/networking, then
@@ -95,6 +98,7 @@ def create_initial_state(user_request: str) -> ArchonState:
         critic_review=None,
         critic_history=[],
         implemented_changes=[],
+        critic_input_hash=None,
         revision_count=0,
         execution_trace=[],
         final_report=None,

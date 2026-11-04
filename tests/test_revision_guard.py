@@ -250,7 +250,9 @@ class TestRevisionAgent:
         assert "removed service 'secrets manager'" in prompts[1]
         assert "lost security capability 'secrets management'" in prompts[1]
         assert "was corrected" in result["execution_trace"][0]["action"]
-        assert result["implemented_changes"] == ["v3: Added Route 53 failover."]
+        # Route 53 is only named in the change_log, not in the design: a proposal, not an implemented change.
+        assert result["implemented_changes"] == []
+        assert result["architecture"].change_log == ["Not implemented (proposed only): Added Route 53 failover."]
 
     def test_revision_that_keeps_regressing_is_not_accepted(self, monkeypatch):
         dropped = _architecture(CROSS_REGION_DR)
@@ -358,9 +360,11 @@ def test_every_revision_is_revalidated_against_the_latest_architecture(monkeypat
 
 
 def test_second_revision_sees_the_first_rounds_feedback_and_changes(monkeypatch):
+    # make_architecture() contains KMS encryption but no read replicas, so the
+    # first request is implemented by the revision and the second is not.
+    asks = ["Round 0 change: add KMS encryption at rest.", "Round 1 change: add Aurora read replicas.", "Round 2 change."]
     reviews = [
-        CriticReview(approved=False, score=50 + n, required_changes=[f"Round {n} change: add control {n}."])
-        for n in range(MAX_REVISIONS + 1)
+        CriticReview(approved=False, score=50 + n, required_changes=[asks[n]]) for n in range(MAX_REVISIONS + 1)
     ]
     calls = _patch_workflow(monkeypatch, lambda node: make_architecture(), reviews)
 
@@ -371,10 +375,11 @@ def test_second_revision_sees_the_first_rounds_feedback_and_changes(monkeypatch)
     first, second = calls["revision_prompts"]
     assert "Round 0 change" in first and "Round 1 change" not in first
     assert "Round 0: REJECTED, score 50/100. Required changes: Round 0 change" in second
-    assert "- v2: Round 0 change: add control 0." in second  # implemented in revision 1
-    assert final_state["implemented_changes"] == [
-        "v2: Round 0 change: add control 0.",
-        "v3: Round 1 change: add control 1.",
+    assert "- v2: Round 0 change: add KMS encryption at rest." in second  # implemented in revision 1
+    # Only the verified change is recorded; the read replicas were never added to the design.
+    assert final_state["implemented_changes"] == ["v2: Round 0 change: add KMS encryption at rest."]
+    assert final_state["architecture"].change_log == [
+        "Not implemented (proposed only): Round 1 change: add Aurora read replicas."
     ]
 
 
