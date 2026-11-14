@@ -1,0 +1,136 @@
+worker-1  | /usr/local/lib/python3.12/site-packages/celery/platforms.py:893: SecurityWarning: You're running the worker with superuser privileges: this is
+worker-1  | absolutely not recommended!
+worker-1  | 
+worker-1  | Please specify a different user using the --uid option.
+worker-1  | 
+worker-1  | User information: uid=0 euid=0 gid=0 egid=0
+worker-1  | 
+worker-1  |   _warn_or_raise_security_error(egid, euid, gid, uid,
+worker-1  | [2026-11-14 17:47:49,995: INFO/MainProcess] Found credentials in shared credentials file: ~/.aws/credentials
+worker-1  | [2026-11-14 17:47:50,087: INFO/MainProcess] event=cloudwatch_enabled service=worker log_group=/archonai/worker region=ap-south-1
+worker-1  | [2026-11-14 17:47:50,100: INFO/MainProcess] Found credentials in shared credentials file: ~/.aws/credentials
+worker-1  | [2026-11-14 17:47:50,186: INFO/MainProcess] event=metrics_enabled service=worker namespace=ArchonAI region=ap-south-1
+worker-1  |  
+worker-1  |  -------------- celery@ff44e945227c v5.7.0 (collider)
+worker-1  | --- ***** ----- 
+worker-1  | -- ******* ---- Linux-6.12.76-linuxkit-aarch64-with-glibc2.41 2026-11-14 17:47:50
+worker-1  | - *** --- * --- 
+worker-1  | - ** ---------- [config]
+worker-1  | - ** ---------- .> app:         archonai:0xffffb1e80590
+worker-1  | - ** ---------- .> transport:   redis://:**@redis:6379/0
+worker-1  | - ** ---------- .> results:     disabled://
+worker-1  | - *** --- * --- .> concurrency: 1 (prefork)
+worker-1  | -- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+worker-1  | --- ***** ----- 
+worker-1  |  -------------- [queues]
+worker-1  |                 .> celery           exchange=celery(direct) key=celery
+worker-1  |                 
+worker-1  | 
+worker-1  | [tasks]
+worker-1  |   . archonai.run_architecture_job
+worker-1  | 
+worker-1  | [2026-11-14 17:47:50,352: INFO/MainProcess] Connected to redis://:**@redis:6379/0
+worker-1  | [2026-11-14 17:47:50,360: INFO/MainProcess] mingle: searching for neighbors
+worker-1  | [2026-11-14 17:47:51,377: INFO/MainProcess] mingle: all alone
+worker-1  | [2026-11-14 17:47:51,413: INFO/MainProcess] celery@ff44e945227c ready.
+worker-1  | [2026-11-14 18:06:17,238: INFO/MainProcess] Task archonai.run_architecture_job[d28bd2dc-b404-4c67-a425-e690ef647046] received
+worker-1  | [2026-11-14 18:06:17,431: INFO/ForkPoolWorker-1] event=job_started job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 attempt=1 redelivered=false
+worker-1  | [2026-11-14 18:06:17,465: INFO/ForkPoolWorker-1] event=workflow_started job_id=21c17890-d3bf-4e87-abbb-19baf6c71580
+worker-1  | [2026-11-14 18:06:19,411: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:06:19,432: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=requirements_analyzer max_tokens=750 input_tokens=1194 output_tokens=471 finish_reason=tool_calls call_id=29e75ab00258 provider=groq model=qwen/qwen3.8-27b request_ms=1836
+worker-1  | [2026-11-14 18:06:19,437: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=29e75ab00258 node=requirements_analyzer call_type=structured schema=Requirements provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=1870 http_requests=1 sdk_retries=0 sdk_retry_wait_ms=0 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=1194 output_tokens=471 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:06:19,437: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=requirements_analyzer iteration=0 outcome=success duration_ms=1964
+worker-1  | [2026-11-14 18:06:23,456: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:06:23,459: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_planner max_tokens=750 input_tokens=939 output_tokens=750 finish_reason=tool_calls call_id=678f96d979b2 provider=groq model=qwen/qwen3.8-27b request_ms=3979
+worker-1  | [2026-11-14 18:06:23,460: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=678f96d979b2 node=architecture_planner call_type=structured schema=ArchitecturePlan provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=3985 http_requests=1 sdk_retries=0 sdk_retry_wait_ms=0 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=939 output_tokens=750 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:06:23,460: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_planner iteration=0 outcome=success duration_ms=4015
+worker-1  | [2026-11-14 18:06:23,547: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:06:23,547: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 19.000000 seconds
+worker-1  | [2026-11-14 18:06:42,662: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:06:42,665: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 10.000000 seconds
+worker-1  | [2026-11-14 18:06:52,756: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:06:52,762: WARNING/ForkPoolWorker-1] event=llm_request_failed job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_designer error_type=RateLimitError provider_status=429 provider_error_code=rate_limit_exceeded will_retry=true call_attempt=1 retry_in_ms=5987 call_id=a62910a450d7 model=qwen/qwen3.8-27b max_tokens=512 sdk_retries=2 usage_available=false
+worker-1  | [2026-11-14 18:06:59,347: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:06:59,353: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_designer max_tokens=512 input_tokens=1403 output_tokens=114 finish_reason=tool_calls call_id=a62910a450d7 provider=groq model=qwen/qwen3.8-27b request_ms=582
+worker-1  | [2026-11-14 18:06:59,354: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=a62910a450d7 node=architecture_designer call_type=invoke provider=groq model=qwen/qwen3.8-27b max_tokens=512 outcome=success total_ms=35873 http_requests=4 sdk_retries=2 sdk_retry_wait_ms=29019 app_retries=1 app_retry_wait_ms=5989 tool_use_retries=0 llm_responses=1 input_tokens=1403 output_tokens=114 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:07:00,008: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:07:00,010: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_designer max_tokens=512 input_tokens=2978 output_tokens=114 finish_reason=tool_calls call_id=4cbb8313f3b5 provider=groq model=qwen/qwen3.8-27b request_ms=640
+worker-1  | [2026-11-14 18:07:00,011: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=4cbb8313f3b5 node=architecture_designer call_type=invoke provider=groq model=qwen/qwen3.8-27b max_tokens=512 outcome=success total_ms=647 http_requests=1 sdk_retries=0 sdk_retry_wait_ms=0 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=2978 output_tokens=114 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:07:00,114: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:07:00,115: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 17.000000 seconds
+worker-1  | [2026-11-14 18:07:19,236: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:07:19,246: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_designer max_tokens=900 input_tokens=2425 output_tokens=759 finish_reason=tool_calls call_id=0e4537556ce0 provider=groq model=qwen/qwen3.8-27b request_ms=2120
+worker-1  | [2026-11-14 18:07:19,250: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=0e4537556ce0 node=architecture_designer call_type=structured schema=Architecture provider=groq model=qwen/qwen3.8-27b max_tokens=900 outcome=success total_ms=19215 http_requests=2 sdk_retries=1 sdk_retry_wait_ms=17006 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=2425 output_tokens=759 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:07:19,251: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_designer iteration=0 outcome=success duration_ms=55789
+worker-1  | [2026-11-14 18:07:19,746: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:07:19,748: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:07:19,749: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 7.000000 seconds
+worker-1  | [2026-11-14 18:07:19,749: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 7.000000 seconds
+worker-1  | [2026-11-14 18:07:26,845: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:07:26,845: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 38.000000 seconds
+worker-1  | [2026-11-14 18:07:26,849: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:07:26,849: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 38.000000 seconds
+worker-1  | [2026-11-14 18:08:04,968: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:08:04,977: WARNING/ForkPoolWorker-1] event=llm_request_failed job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=database_agent error_type=RateLimitError provider_status=429 provider_error_code=rate_limit_exceeded will_retry=true call_attempt=1 retry_in_ms=47022 call_id=0b774f589c97 model=qwen/qwen3.8-27b max_tokens=750 sdk_retries=2 usage_available=false
+worker-1  | [2026-11-14 18:08:05,589: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:08:05,595: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=compute_agent max_tokens=750 input_tokens=1479 output_tokens=136 finish_reason=tool_calls call_id=fc0c284d08ea provider=groq model=qwen/qwen3.8-27b request_ms=737
+worker-1  | [2026-11-14 18:08:05,598: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=fc0c284d08ea node=compute_agent call_type=structured schema=AnalysisResult provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=46323 http_requests=3 sdk_retries=2 sdk_retry_wait_ms=45009 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=1479 output_tokens=136 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:08:05,599: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=compute_agent iteration=0 outcome=success duration_ms=46342
+worker-1  | [2026-11-14 18:08:52,808: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:08:52,815: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=database_agent max_tokens=750 input_tokens=1479 output_tokens=192 finish_reason=tool_calls call_id=0b774f589c97 provider=groq model=qwen/qwen3.8-27b request_ms=792
+worker-1  | [2026-11-14 18:08:52,817: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=0b774f589c97 node=database_agent call_type=structured schema=AnalysisResult provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=93537 http_requests=4 sdk_retries=2 sdk_retry_wait_ms=45010 app_retries=1 app_retry_wait_ms=47024 tool_use_retries=0 llm_responses=1 input_tokens=1479 output_tokens=192 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:08:52,817: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=database_agent iteration=0 outcome=success duration_ms=93559
+worker-1  | [2026-11-14 18:08:52,953: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:08:52,954: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 24.000000 seconds
+worker-1  | [2026-11-14 18:08:53,482: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 400 Bad Request"
+worker-1  | [2026-11-14 18:08:53,485: WARNING/ForkPoolWorker-1] event=llm_request_failed job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=security_agent error_type=BadRequestError provider_status=400 provider_error_code=tool_use_failed will_retry=true schema=AnalysisResult call_attempt=1 call_id=74185d7e2c71 model=qwen/qwen3.8-27b max_tokens=750 sdk_retries=0 usage_available=false
+worker-1  | [2026-11-14 18:08:53,542: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:08:53,543: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 41.000000 seconds
+worker-1  | [2026-11-14 18:09:17,752: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:09:17,762: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=networking_agent max_tokens=750 input_tokens=1455 output_tokens=130 finish_reason=tool_calls call_id=06f433876119 provider=groq model=qwen/qwen3.8-27b request_ms=793
+worker-1  | [2026-11-14 18:09:17,766: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=06f433876119 node=networking_agent call_type=structured schema=AnalysisResult provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=24922 http_requests=2 sdk_retries=1 sdk_retry_wait_ms=24009 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=1455 output_tokens=130 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:09:17,766: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=networking_agent iteration=0 outcome=success duration_ms=24943
+worker-1  | [2026-11-14 18:09:34,684: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:09:34,686: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 7.000000 seconds
+worker-1  | [2026-11-14 18:09:42,302: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:09:42,308: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=security_agent max_tokens=750 input_tokens=1601 output_tokens=112 finish_reason=tool_calls call_id=74185d7e2c71 provider=groq model=qwen/qwen3.8-27b request_ms=613
+worker-1  | [2026-11-14 18:09:42,312: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=74185d7e2c71 node=security_agent call_type=structured schema=AnalysisResult provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=49461 http_requests=4 sdk_retries=2 sdk_retry_wait_ms=48014 app_retries=0 app_retry_wait_ms=0 tool_use_retries=1 llm_responses=1 input_tokens=1601 output_tokens=112 finish_reason=tool_calls usage_available=partial
+worker-1  | [2026-11-14 18:09:42,312: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=security_agent iteration=0 outcome=success duration_ms=49488
+worker-1  | [2026-11-14 18:09:42,586: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:09:42,586: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 35.000000 seconds
+worker-1  | [2026-11-14 18:09:43,172: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 400 Bad Request"
+worker-1  | [2026-11-14 18:09:43,174: WARNING/ForkPoolWorker-1] event=llm_request_failed job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=reliability_agent error_type=BadRequestError provider_status=400 provider_error_code=tool_use_failed will_retry=true schema=AnalysisResult call_attempt=1 call_id=9281e693b75c model=qwen/qwen3.8-27b max_tokens=750 sdk_retries=0 usage_available=false
+worker-1  | [2026-11-14 18:09:43,220: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:09:43,220: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 34.000000 seconds
+worker-1  | [2026-11-14 18:10:17,667: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:10:17,669: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 44.000000 seconds
+worker-1  | [2026-11-14 18:10:17,893: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:10:17,898: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=reliability_agent max_tokens=750 input_tokens=1613 output_tokens=130 finish_reason=tool_calls call_id=9281e693b75c provider=groq model=qwen/qwen3.8-27b request_ms=667
+worker-1  | [2026-11-14 18:10:17,900: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=9281e693b75c node=reliability_agent call_type=structured schema=AnalysisResult provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=35562 http_requests=3 sdk_retries=1 sdk_retry_wait_ms=34008 app_retries=0 app_retry_wait_ms=0 tool_use_retries=1 llm_responses=1 input_tokens=1613 output_tokens=130 finish_reason=tool_calls usage_available=partial
+worker-1  | [2026-11-14 18:10:17,901: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=reliability_agent iteration=0 outcome=success duration_ms=35581
+worker-1  | [2026-11-14 18:11:03,072: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:11:03,078: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=cost_agent max_tokens=750 input_tokens=1621 output_tokens=499 finish_reason=tool_calls call_id=9c6ca0d30e97 provider=groq model=qwen/qwen3.8-27b request_ms=1391
+worker-1  | [2026-11-14 18:11:03,081: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=9c6ca0d30e97 node=cost_agent call_type=structured schema=CostAnalysis provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=80738 http_requests=3 sdk_retries=2 sdk_retry_wait_ms=79019 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=1621 output_tokens=499 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:11:03,081: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=cost_agent iteration=0 outcome=success duration_ms=80762
+worker-1  | [2026-11-14 18:11:03,089: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_validator iteration=0 outcome=success duration_ms=4
+worker-1  | [2026-11-14 18:11:03,186: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:11:03,187: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 14.000000 seconds
+worker-1  | [2026-11-14 18:11:18,181: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:11:18,183: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_critic max_tokens=750 input_tokens=2504 output_tokens=302 finish_reason=tool_calls call_id=d44c9bc18ee8 provider=groq model=qwen/qwen3.8-27b request_ms=990
+worker-1  | [2026-11-14 18:11:18,185: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=d44c9bc18ee8 node=architecture_critic call_type=structured schema=CriticReview provider=groq model=qwen/qwen3.8-27b max_tokens=750 outcome=success total_ms=15078 http_requests=2 sdk_retries=1 sdk_retry_wait_ms=14005 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=2504 output_tokens=302 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:11:18,186: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_critic iteration=0 outcome=success duration_ms=15095
+worker-1  | [2026-11-14 18:11:18,288: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:11:18,288: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 17.000000 seconds
+worker-1  | [2026-11-14 18:11:38,042: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:11:38,050: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_revision max_tokens=900 input_tokens=2356 output_tokens=811 finish_reason=tool_calls call_id=71e6c4c04229 provider=groq model=qwen/qwen3.8-27b request_ms=2749
+worker-1  | [2026-11-14 18:11:38,054: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=71e6c4c04229 node=architecture_revision call_type=structured schema=Architecture provider=groq model=qwen/qwen3.8-27b max_tokens=900 outcome=success total_ms=19837 http_requests=2 sdk_retries=1 sdk_retry_wait_ms=17007 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=2356 output_tokens=811 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:11:38,136: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:11:38,137: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 30.000000 seconds
+worker-1  | [2026-11-14 18:12:10,296: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+worker-1  | [2026-11-14 18:12:10,303: INFO/ForkPoolWorker-1] event=llm_call_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_revision max_tokens=900 input_tokens=2471 output_tokens=857 finish_reason=tool_calls call_id=1ddfa9dfbf6b provider=groq model=qwen/qwen3.8-27b request_ms=2152
+worker-1  | [2026-11-14 18:12:10,305: INFO/ForkPoolWorker-1] event=llm_call_summary job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 call_id=1ddfa9dfbf6b node=architecture_revision call_type=structured schema=Architecture provider=groq model=qwen/qwen3.8-27b max_tokens=900 outcome=success total_ms=32215 http_requests=2 sdk_retries=1 sdk_retry_wait_ms=30010 app_retries=0 app_retry_wait_ms=0 tool_use_retries=0 llm_responses=1 input_tokens=2471 output_tokens=857 finish_reason=tool_calls usage_available=true
+worker-1  | [2026-11-14 18:12:10,374: INFO/ForkPoolWorker-1] event=revision_checked job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 regressions=0 unjustified=0 justified=0 unresolved_findings=0 unimplemented_claims=0 corrected=true accepted=true changes_implemented=4 changes_proposed=0 changes_removed=0 changes_unverified=0
+worker-1  | [2026-11-14 18:12:10,375: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_revision iteration=0 outcome=success duration_ms=52188
+worker-1  | [2026-11-14 18:12:10,378: INFO/ForkPoolWorker-1] event=node_finished job_id=21c17890-d3bf-4e87-abbb-19baf6c71580 node=architecture_validator iteration=1 outcome=success duration_ms=0
+worker-1  | [2026-11-14 18:12:10,478: INFO/ForkPoolWorker-1] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+worker-1  | [2026-11-14 18:12:10,479: INFO/ForkPoolWorker-1] Retrying request to /openai/v1/chat/completions in 45.000000 seconds

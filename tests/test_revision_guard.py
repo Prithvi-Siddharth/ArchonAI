@@ -37,7 +37,7 @@ CROSS_REGION_DR = AWSService(
     name="Aurora Global Database",
     category="Database",
     purpose="Cross-region replica in a secondary region for disaster recovery",
-    justification="RTO 15 min, RPO 5 min if the primary region fails",
+    justification="RTO 15 min, RPO 5 min if the primary region fails; snapshots copied cross-region",
 )
 
 ROUND_0 = CriticReview(

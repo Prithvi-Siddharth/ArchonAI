@@ -9,6 +9,8 @@ point: the critic can be wrong or inconsistent, this cannot.
 
 from __future__ import annotations
 
+import re
+
 from models.schemas import Architecture, Requirements, Severity, ValidationIssue, ValidationResult
 
 _LOAD_BALANCER_TERMS = ["load balancer", "alb", "elastic load balancing", " elb"]
@@ -38,7 +40,7 @@ _SECURITY_TERMS = [
     "secrets manager",
     "least privilege",
 ]
-_BACKUP_TERMS = ["backup", "snapshot", "point-in-time recovery", "aws backup"]
+_BACKUP_TERMS = ["backup", "snapshot", "point-in-time recovery", "point in time recovery", "pitr", "aws backup"]
 _PRIVATE_DB_TERMS = [
     "private subnet",
     "private networking",
@@ -70,6 +72,128 @@ def blocking_findings(result: ValidationResult | None) -> list[ValidationIssue]:
     if result is None:
         return []
     return [issue for issue in result.issues if issue.severity in BLOCKING_SEVERITIES]
+
+
+# ---------------------------------------------------------------------------
+# Backups, per database service
+# ---------------------------------------------------------------------------
+
+# Database engines this rule checks, by the whole words that name them in a
+# service name. ElastiCache is a cache, not a database, for this rule.
+_DATABASE_ENGINES: dict[str, tuple[str, ...]] = {
+    "rds": ("rds", "relational database service"),
+    "aurora": ("aurora",),
+    "dynamodb": ("dynamodb",),
+    "documentdb": ("documentdb", "document db"),
+    "neptune": ("neptune",),
+}
+# Generic wording that means a database exists even when no engine is named
+# (used only by the whole-text fallback).
+_GENERIC_DATABASE_TERMS = ("database", "databases", *(t for terms in _DATABASE_ENGINES.values() for t in terms))
+_ALL_DATABASES = re.compile(r"\b(all|every|each)\s+(\w+\s+)?(databases?|data\s+stores?)\b")
+_NAME_PARTS = re.compile(r"\s*(?:\+|,|&|/|\band\b)\s*")
+
+
+def _normalize(text: str) -> str:
+    """Lowercase; hyphens and underscores become spaces ('point-in-time' == 'point in time')."""
+    return " ".join(re.sub(r"[-_]", " ", text.lower()).split())
+
+
+def _has_word(text: str, term: str) -> bool:
+    """`term` as a whole word or phrase (plural allowed): 'rds' is not in 'records'."""
+    pattern = rf"(?<![a-z0-9]){re.escape(_normalize(term))}s?(?![a-z0-9])"
+    return re.search(pattern, _normalize(text)) is not None
+
+
+def _names_any(text: str, terms: set[str]) -> bool:
+    return any(_has_word(text, term) for term in terms)
+
+
+def _has_backup_term(text: str) -> bool:
+    return any(_has_word(text, term) for term in _BACKUP_TERMS)
+
+
+def _split_service_name(name: str) -> list[str]:
+    """Split a combined service name on + , & / and -- but never inside brackets.
+
+    'Amazon DynamoDB + Amazon ElastiCache (Redis)' -> ['Amazon DynamoDB', 'Amazon ElastiCache (Redis)'];
+    'Amazon RDS (MySQL, PostgreSQL)' stays whole. Each bracketed part is set
+    aside before splitting and restored verbatim afterwards.
+    """
+    brackets: list[str] = []
+
+    def set_aside(match: re.Match) -> str:
+        brackets.append(match.group(0))
+        return f"\x00{len(brackets) - 1}\x00"
+
+    masked = re.sub(r"\([^)]*\)", set_aside, name)
+    restore = re.compile(r"\x00(\d+)\x00")
+    return [restore.sub(lambda m: brackets[int(m.group(1))], part).strip() for part in _NAME_PARTS.split(masked)]
+
+
+def _database_components(architecture: Architecture) -> list[tuple[str, str, set[str]]]:
+    """(component name, its service entry's own text, engine terms) for each database named in a service.
+
+    Combined entries are split: 'Amazon DynamoDB + Amazon ElastiCache (Redis)'
+    yields only 'Amazon DynamoDB'. A bracketed engine stays with its service:
+    'Amazon RDS (Aurora)' is one database.
+    """
+    components = []
+    for service in architecture.services:
+        own_text = f"{service.name} {service.purpose} {service.justification}"
+        for part in _split_service_name(service.name):
+            terms = {t for engine in _DATABASE_ENGINES.values() for t in engine if _has_word(part, t)}
+            if terms:
+                components.append((part, own_text, terms))
+    return components
+
+
+def _backup_service_texts(architecture: Architecture) -> list[str]:
+    """The text of every dedicated AWS Backup service entry."""
+    return [
+        f"{s.name} {s.purpose} {s.justification}"
+        for s in architecture.services
+        if _has_word(s.name, "aws backup")
+    ]
+
+
+def databases_without_backups(architecture: Architecture) -> list[str]:
+    """Database services (by name) with no backup/recovery strategy of their own.
+
+    A database is covered only by (A) a backup term in its own service entry,
+    (B) a data-flow step that names it and a backup term, or (C) an AWS Backup
+    service entry that names it or covers all databases. Backup wording that
+    belongs to another service (e.g. S3 "with backups") never counts.
+    """
+    flow_texts = [f"{step.source} {step.destination} {step.description}" for step in architecture.data_flow]
+    backup_services = _backup_service_texts(architecture)
+    uncovered: list[str] = []
+    for name, own_text, terms in _database_components(architecture):
+        covered = (
+            _has_backup_term(own_text)
+            or any(_names_any(text, terms) and _has_backup_term(text) for text in flow_texts)
+            or any(_names_any(text, terms) or _ALL_DATABASES.search(_normalize(text)) for text in backup_services)
+        )
+        if not covered and name not in uncovered:
+            uncovered.append(name)
+    return uncovered
+
+
+def _backup_issue(architecture: Architecture) -> ValidationIssue | None:
+    """The database_without_backups finding, if any (rule name and HIGH severity unchanged)."""
+    if _database_components(architecture):
+        uncovered = databases_without_backups(architecture)
+        if not uncovered:
+            return None
+        message = "No backup strategy described for: " + ", ".join(uncovered) + "."
+    else:
+        # No supported database is named, but the design may still describe
+        # one generically ("a relational database"): keep the whole-text check.
+        text = _full_text(architecture)
+        if not any(_has_word(text, term) for term in _GENERIC_DATABASE_TERMS) or _has_backup_term(text):
+            return None
+        message = "A database is part of the architecture, but no backup strategy was described."
+    return ValidationIssue(rule="database_without_backups", message=message, severity=Severity.HIGH)
 
 
 def _full_text(architecture: Architecture) -> str:
@@ -155,15 +279,10 @@ def validate_architecture(architecture: Architecture, requirements: Requirements
             )
         )
 
-    has_database = any(term in text for term in _DATABASE_TERMS)
-    if has_database and not any(term in text for term in _BACKUP_TERMS):
-        issues.append(
-            ValidationIssue(
-                rule="database_without_backups",
-                message="A database is part of the architecture, but no backup strategy was described.",
-                severity=Severity.HIGH,
-            )
-        )
+    has_database = any(term in text for term in _DATABASE_TERMS)  # used by public_database_exposure below
+    backup_issue = _backup_issue(architecture)
+    if backup_issue is not None:
+        issues.append(backup_issue)
 
     if (
         has_database

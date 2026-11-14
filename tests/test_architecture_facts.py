@@ -52,7 +52,7 @@ DYNAMODB = AWSService(
     name="Amazon DynamoDB",
     category="Database",
     purpose="Catalog, session and cart data at single-digit ms",
-    justification="Offloads high-volume catalog reads from Aurora",
+    justification="Offloads high-volume catalog reads from Aurora; point-in-time recovery enabled",
 )
 ADD_SECRETS = CriticReview(
     approved=False,
@@ -212,7 +212,7 @@ class TestGuardAliases:
                     name="Amazon ElastiCache (Redis) + Amazon DynamoDB",
                     category="Database",
                     purpose="Redis cache plus DynamoDB catalog store",
-                    justification="j",
+                    justification="DynamoDB point-in-time recovery enabled",
                 ),
             ]
         )

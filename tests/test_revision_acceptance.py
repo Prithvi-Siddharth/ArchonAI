@@ -156,7 +156,8 @@ def test_correction_that_adds_the_configuration_is_accepted(monkeypatch):
 
     correction = prompts[1]
     assert "The database_without_backups validator finding remains unresolved" in correction
-    assert "'Amazon Aurora' service" in correction
+    assert "purpose or justification of 'Amazon Aurora'" in correction  # the uncovered database, by name
+    assert "backup wording on any other service does not count" in correction
     assert "'automated backups' and 'point-in-time recovery'" in correction
     assert f"Claimed in change_log but not in the design: '{CLAIM}'" in correction
     assert "Do not claim implementation only in change_log" in correction
@@ -166,7 +167,10 @@ def test_correction_that_adds_the_configuration_is_accepted(monkeypatch):
     assert _rules(revised) == []  # revalidated: the validator now passes
     assert result["implemented_changes"] == [f"v2: {CLAIM}"]
     assert revised.change_log == [CLAIM]  # verified, so not marked as proposed
-    assert "left blocking findings unresolved and was corrected" in result["execution_trace"][0]["action"]
+    action = result["execution_trace"][0]["action"]
+    assert "left a blocking validator finding unresolved (database_without_backups)" in action
+    assert "claimed a requested change in the change log that was not implemented" in action
+    assert "-- it was corrected." in action
 
 
 def test_correction_that_still_does_not_implement_it_stays_rejected(monkeypatch, caplog):
@@ -278,3 +282,109 @@ def test_correction_gets_the_current_version_and_the_rejected_attempt(monkeypatc
     assert compact_architecture(current) in first
     assert "Your previous attempt (not accepted):\n" + compact_architecture(attempt) in correction
     assert correction.count("IMPORTANT:") == 1  # one correction, not stacked
+
+
+# ---------------------------------------------------------------------------
+# 10. Why the first attempt was rejected is logged (first_* fields)
+# ---------------------------------------------------------------------------
+
+_FIRST_FIELDS = (
+    "first_reasons",
+    "first_unjustified",
+    "first_categories",
+    "first_findings",
+    "first_unimplemented_claims",
+)
+
+
+def _run_logged(monkeypatch, caplog, current, review, *attempts):
+    _script_revisions(monkeypatch, *attempts)
+    with caplog.at_level("INFO"):
+        result = revision_agent.run(_state(current, review))
+    (logged,) = _revision_checks(caplog)
+    return result, logged
+
+
+def test_regression_triggered_correction_logs_the_first_attempts_regression(monkeypatch, caplog):
+    current = _design(WITH_BACKUPS)
+    dropped_cache = _design(WITH_BACKUPS, drop="Amazon ElastiCache")
+    result, logged = _run_logged(monkeypatch, caplog, current, BACKUPS_REVIEW, dropped_cache, current)
+
+    assert logged["corrected"] is True and logged["accepted"] is True
+    assert logged["first_reasons"] == "regression"
+    assert logged["first_unjustified"] >= 1
+    assert "availability" in logged["first_categories"].split(",")
+    assert "first_findings" not in logged  # no unresolved finding: an empty list is left out
+    assert logged["first_unimplemented_claims"] == 0
+    # The final-attempt fields still describe the corrected attempt.
+    assert logged["regressions"] == 0 and logged["unjustified"] == 0
+    action = result["execution_trace"][0]["action"]
+    assert "A first attempt introduced an unjustified regression -- it was corrected." in action
+
+
+def test_unresolved_finding_correction_logs_the_rule(monkeypatch, caplog):
+    result, logged = _run_logged(
+        monkeypatch, caplog, _design(NO_BACKUPS), BACKUPS_REVIEW, _design(NO_BACKUPS), _design(WITH_BACKUPS)
+    )
+
+    assert logged["accepted"] is True
+    assert logged["first_reasons"] == "unresolved_finding"
+    assert logged["first_findings"] == "database_without_backups"
+    assert logged["first_unjustified"] == 0 and "first_categories" not in logged
+    assert logged["first_unimplemented_claims"] == 0
+    assert logged["unresolved_findings"] == 0  # the corrected attempt resolved it
+    action = result["execution_trace"][0]["action"]
+    assert "A first attempt left a blocking validator finding unresolved (database_without_backups) -- it was corrected." in action
+
+
+def test_unimplemented_claim_correction_logs_the_claim_count(monkeypatch, caplog):
+    claim = "Added AWS Secrets Manager for DB credentials."
+    claimed_only = _design(WITH_BACKUPS, change_log=[claim])
+    implemented = _design(WITH_BACKUPS, SECRETS, change_log=[claim])
+    result, logged = _run_logged(monkeypatch, caplog, _design(WITH_BACKUPS), SECRETS_REVIEW, claimed_only, implemented)
+
+    assert logged["accepted"] is True
+    assert logged["first_reasons"] == "unimplemented_claim"
+    assert logged["first_unimplemented_claims"] == 1
+    assert logged["first_unjustified"] == 0
+    assert "first_findings" not in logged and "first_categories" not in logged
+    assert logged["unimplemented_claims"] == 0
+    action = result["execution_trace"][0]["action"]
+    assert (
+        "A first attempt claimed a requested change in the change log that was not implemented in the "
+        "architecture -- it was corrected." in action
+    )
+    assert claim not in caplog.text  # counts only, never the model's text
+
+
+def test_all_simultaneous_first_attempt_reasons_are_reported(monkeypatch, caplog):
+    every_problem = _design(NO_BACKUPS, drop="Amazon ElastiCache", change_log=[CLAIM])
+    fixed = _design(WITH_BACKUPS, change_log=[CLAIM])
+    result, logged = _run_logged(monkeypatch, caplog, _design(NO_BACKUPS), BACKUPS_REVIEW, every_problem, fixed)
+
+    assert logged["accepted"] is True
+    assert logged["first_reasons"] == "regression,unresolved_finding,unimplemented_claim"
+    assert logged["first_unjustified"] >= 1 and logged["first_categories"]
+    assert logged["first_findings"] == "database_without_backups"
+    assert logged["first_unimplemented_claims"] == 1
+    action = result["execution_trace"][0]["action"]
+    assert "A first attempt introduced an unjustified regression; it also left a blocking validator finding" in action
+    assert "; it also claimed a requested change in the change log" in action
+
+
+def test_rejected_after_correction_still_logs_the_first_attempt(monkeypatch, caplog):
+    claimed_only = _design(NO_BACKUPS, change_log=[CLAIM])
+    _, logged = _run_logged(monkeypatch, caplog, _design(NO_BACKUPS), BACKUPS_REVIEW, claimed_only, claimed_only)
+
+    assert logged["accepted"] is False
+    assert logged["first_reasons"] == "unresolved_finding,unimplemented_claim"
+    assert logged["first_findings"] == "database_without_backups"
+
+
+def test_no_correction_means_no_first_fields(monkeypatch, caplog):
+    added = _design(WITH_BACKUPS, SECRETS, change_log=["Added AWS Secrets Manager for DB credentials."])
+    result, logged = _run_logged(monkeypatch, caplog, _design(WITH_BACKUPS), SECRETS_REVIEW, added)
+
+    assert logged["corrected"] is False and logged["accepted"] is True
+    assert not any(field in logged for field in _FIRST_FIELDS)
+    assert "first attempt" not in result["execution_trace"][0]["action"].lower()

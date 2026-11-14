@@ -32,6 +32,7 @@ from tools.architecture_facts import (
     pending_requests,
     verify_changes,
 )
+from tools.architecture_validator import databases_without_backups
 from tools.revision_guard import (
     Regression,
     blocking,
@@ -147,8 +148,9 @@ not in the services or data_flow is not implemented and will be rejected again.
 # How to resolve each validator rule, in the exact terms the validator looks for.
 _FINDING_FIXES = {
     "database_without_backups": (
-        "Add automated backups and point-in-time recovery explicitly to the {database} service's "
-        "purpose or justification (use the words 'automated backups' and 'point-in-time recovery')."
+        "Add automated backups and point-in-time recovery explicitly to the purpose or justification of "
+        "{uncovered} (use the words 'automated backups' and 'point-in-time recovery'). Each database "
+        "needs its own backup strategy; backup wording on any other service does not count."
     ),
     "high_availability_single_az": (
         "State 'multi-AZ' explicitly in the purpose or justification of the compute and {database} services."
@@ -275,6 +277,37 @@ class _Verdict:
     def acceptable(self) -> bool:
         return not self.regressed and not self.incomplete
 
+    @property
+    def reasons(self) -> list[str]:
+        """Why this attempt can't be accepted, in a fixed order (empty if it can)."""
+        reasons = []
+        if self.regressed:
+            reasons.append(REASON_REGRESSION)
+        if self.unresolved:
+            reasons.append(REASON_UNRESOLVED_FINDING)
+        if self.unimplemented:
+            reasons.append(REASON_UNIMPLEMENTED_CLAIM)
+        return reasons
+
+
+# Why a first attempt was rejected and corrected (logged as first_reasons).
+REASON_REGRESSION = "regression"
+REASON_UNRESOLVED_FINDING = "unresolved_finding"
+REASON_UNIMPLEMENTED_CLAIM = "unimplemented_claim"
+
+
+def _correction_note(first: _Verdict) -> str:
+    """Trace sentence saying why the first attempt was rejected before it was corrected."""
+    phrases = []
+    if first.regressed:
+        phrases.append("introduced an unjustified regression")
+    if first.unresolved:
+        rules = ", ".join(issue.rule for issue in first.unresolved)
+        phrases.append(f"left a blocking validator finding unresolved ({rules})")
+    if first.unimplemented:
+        phrases.append("claimed a requested change in the change log that was not implemented in the architecture")
+    return " A first attempt " + "; it also ".join(phrases) + " -- it was corrected."
+
 
 def _database_name(architecture: Architecture) -> str:
     for service in architecture.services:
@@ -285,9 +318,14 @@ def _database_name(architecture: Architecture) -> str:
 
 def _format_unresolved(verdict: _Verdict, candidate: Architecture) -> str:
     database = _database_name(candidate)
+    # The validator's own list of databases lacking backups, by name (never
+    # "the first Database-category service", which may be the wrong one).
+    uncovered = ", ".join(f"'{name}'" for name in databases_without_backups(candidate)) or "the database service"
     lines = []
     for issue in verdict.unresolved:
-        fix = _FINDING_FIXES.get(issue.rule, "Fix it in the services or data_flow.").format(database=database)
+        fix = _FINDING_FIXES.get(issue.rule, "Fix it in the services or data_flow.").format(
+            database=database, uncovered=uncovered
+        )
         lines.append(f"- The {issue.rule} validator finding remains unresolved ({issue.message}) {fix}")
     for check in verdict.unimplemented:
         lines.append(
@@ -310,8 +348,16 @@ def _correction(verdict: _Verdict, candidate: Architecture, version: int) -> str
 
 
 def _log_check(
-    verdict: _Verdict, corrected: bool, accepted: bool, checks: list[ChangeCheck] | None = None
+    verdict: _Verdict,
+    corrected: bool,
+    accepted: bool,
+    checks: list[ChangeCheck] | None = None,
+    first: _Verdict | None = None,
 ) -> None:
+    """Log the final verdict; when a correction was made, also why the first attempt failed.
+
+    Only counts, categories and validator rule names -- never model text.
+    """
     regressions = verdict.regressions
     unjustified = blocking(regressions)
     counts = {}
@@ -319,6 +365,16 @@ def _log_check(
         counts = {
             f"changes_{status}": sum(1 for c in checks if c.status == status)
             for status in ("implemented", "proposed", "removed", "unverified")
+        }
+    first_fields = {}
+    if corrected and first is not None:
+        first_unjustified = blocking(first.regressions)
+        first_fields = {
+            "first_reasons": ",".join(first.reasons),
+            "first_unjustified": len(first_unjustified),
+            "first_categories": ",".join(sorted({r.category for r in first_unjustified})) or None,
+            "first_findings": ",".join(issue.rule for issue in first.unresolved) or None,
+            "first_unimplemented_claims": len(first.unimplemented),
         }
     log_event(
         logger,
@@ -332,6 +388,7 @@ def _log_check(
         unimplemented_claims=len(verdict.unimplemented),
         corrected=corrected,
         accepted=accepted,
+        **first_fields,
         **counts,
     )
 
@@ -394,7 +451,7 @@ def run(state: ArchonState) -> dict:
         unjustified = blocking(regressions)
 
         if unjustified:
-            _log_check(verdict, corrected, accepted=False)
+            _log_check(verdict, corrected, accepted=False, first=first_verdict)
             # Accepting it would undo earlier work; keep the current version and
             # let the critic review it again (same fallback as a failed call).
             listed = "; ".join(r.describe() for r in unjustified[:3])
@@ -406,7 +463,7 @@ def run(state: ArchonState) -> dict:
             revised = architecture
             output_summary = "Revision regressed earlier fixes -- architecture unchanged this round."
         elif verdict.incomplete:
-            _log_check(verdict, corrected, accepted=False)
+            _log_check(verdict, corrected, accepted=False, first=first_verdict)
             # No regressions, but the blocking problem is still there (or only
             # claimed in change_log). Accepting it would record fixes that don't
             # exist; keep the current version, whose validator findings stay
@@ -426,13 +483,11 @@ def run(state: ArchonState) -> dict:
             if not revised.change_log:
                 revised.change_log = list(review.required_changes)
             newly_implemented, checks = _record_verified_changes(revised)
-            _log_check(verdict, corrected, accepted=True, checks=checks)
+            _log_check(verdict, corrected, accepted=True, checks=checks, first=first_verdict)
             justified = [r for r in regressions if r.justified]
             action = f"Revised architecture to v{revised.version}, addressing {len(review.required_changes)} required changes."
-            if corrected and first_verdict.regressed:
-                action += " A first attempt removed earlier fixes and was corrected."
-            elif corrected:
-                action += " A first attempt left blocking findings unresolved and was corrected."
+            if corrected:
+                action += _correction_note(first_verdict)
             if justified:
                 action += " Justified removals: " + "; ".join(r.item for r in justified[:4]) + "."
             proposed = sum(1 for c in checks if c.status == PROPOSED)

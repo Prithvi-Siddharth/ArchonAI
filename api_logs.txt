@@ -1,0 +1,59 @@
+api-1  | 2026-11-14 17:47:48,288 INFO botocore.credentials: Found credentials in shared credentials file: ~/.aws/credentials
+api-1  | 2026-11-14 17:47:48,849 INFO graph.cloudwatch_logs: event=cloudwatch_enabled service=api log_group=/archonai/api region=ap-south-1
+api-1  | INFO:     Started server process [1]
+api-1  | INFO:     Waiting for application startup.
+api-1  | INFO:     Application startup complete.
+api-1  | INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+api-1  | INFO:     127.0.0.1:33606 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:42630 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:64230 - "GET /docs HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:64230 - "GET /openapi.json HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:55564 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:48424 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:57910 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:43050 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36490 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:49868 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:34842 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:42316 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:55728 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:54098 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:54120 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36804 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36842 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:48360 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:52822 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:50348 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:49438 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36850 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:34866 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:38874 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:34060 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:52374 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:53978 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51334 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51906 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:50186 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:59122 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51824 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:37982 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:41292 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51996 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:34998 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:50526 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:44870 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:55860 - "POST /api/v1/architectures/jobs HTTP/1.1" 202 Accepted
+api-1  | INFO:     127.0.0.1:45342 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:34854 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:59030 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:54354 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:55104 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:44548 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60294 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:45124 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:44812 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:42110 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:45448 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51030 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:60616 - "POST /api/v1/architectures/jobs HTTP/1.1" 202 Accepted
+api-1  | INFO:     127.0.0.1:40982 - "GET /health HTTP/1.1" 200 OK
