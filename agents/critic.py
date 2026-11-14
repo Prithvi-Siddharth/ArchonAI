@@ -13,18 +13,24 @@ import hashlib
 import logging
 
 from agents import llm as llm_module
-from agents.formatting import compact_analysis, compact_architecture, compact_cost_analysis
+from agents.formatting import (
+    compact_analysis,
+    compact_architecture,
+    compact_cost_analysis,
+)
 from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import (
     AnalysisResult,
     Architecture,
     CostAnalysis,
+    CriticIssue,
     CriticReview,
     Requirements,
     Severity,
     ValidationResult,
 )
+from tools.architecture_validator import blocking_findings
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +51,8 @@ Security Analysis: {security}
 Reliability Analysis: {reliability}
 Cost Analysis: {cost}
 
-Deterministic validator findings (treat these as confirmed, real issues -- they were
-found by rule-based checks, not opinion):
+Deterministic validator findings (confirmed, real issues found by rule-based checks, not
+opinion -- each with the severity the validator assigned):
 {validation_issues}
 
 Look specifically for: single points of failure, scalability problems, database
@@ -57,8 +63,13 @@ violation of the stated requirements.
 Requirement provenance: in the requirements, explicit_requirements are what the user
 actually asked for; inferred_assumptions are the analyst's assumptions, not user
 requirements. Severity rules:
-- critical: violates an explicit user requirement, is a confirmed validator finding, or is
-  a concrete, named risk of data loss, a security breach or an outage at the stated load.
+- critical: violates an explicit user requirement, or is a concrete, named risk of data
+  loss, a security breach or an outage at the stated load.
+- Validator findings keep the validator's severity -- do not raise them to critical.
+  CRITICAL and HIGH findings block approval. A MEDIUM finding lowers the score and belongs
+  in required_changes, but on its own does not block approval. LOW findings are informational.
+- Problems you identify yourself are rated on their own merits, independently of the
+  validator: any of them can still be critical.
 - An unmet inferred assumption or an optional best practice (e.g. multi-region deployment
   when the user did not ask for it) is at most medium, and on its own must not block approval.
 
@@ -66,7 +77,7 @@ Service budget: the design may use at most 8 service entries, and closely relate
 can share one entry (e.g. "Amazon ElastiCache (Redis) + Amazon DynamoDB"). Request a new
 service only when no existing entry can cover the need.
 
-Any unresolved CRITICAL deterministic validator finding must result in approved=false.
+Any unresolved CRITICAL or HIGH deterministic validator finding must result in approved=false.
 Score the architecture from 0-100. Only approve (approved=true) if the score is 80 or
 higher AND there are no critical issues. List concrete required_changes for anything
 that must be fixed before approval.
@@ -93,6 +104,26 @@ def _format_validation_issues(validation_results: ValidationResult | None) -> st
         for issue in validation_results.issues
     ]
     return "\n".join(lines)
+
+
+def _withhold_approval(review: CriticReview, validation_results: ValidationResult | None) -> tuple[CriticReview, list[str]]:
+    """Never approve while a CRITICAL or HIGH validator finding is unresolved.
+
+    The prompt already says so; this makes it a guarantee rather than a
+    request to the model. It only ever turns an approval into a rejection --
+    never the reverse -- and leaves MEDIUM/LOW findings to the critic's
+    judgement. Each finding is added at the validator's own severity.
+    """
+    findings = blocking_findings(validation_results)
+    if not review.approved or not findings:
+        return review, []
+    issues = list(review.issues) + [
+        CriticIssue(issue=f"Unresolved validator finding ({f.rule}): {f.message}", severity=f.severity, category="validator")
+        for f in findings
+    ]
+    required = list(review.required_changes) + [f"Resolve the {f.rule} validator finding." for f in findings]
+    rules = [f.rule for f in findings]
+    return review.model_copy(update={"approved": False, "issues": issues, "required_changes": required}), rules
 
 
 def run(state: ArchonState) -> dict:
@@ -154,8 +185,18 @@ def run(state: ArchonState) -> dict:
 
     try:
         review = llm_module.invoke_structured(llm, CriticReview, prompt)
+        review, withheld = _withhold_approval(review, validation_results)
         verdict = "APPROVED" if review.approved else "REJECTED"
         action = f"Reviewed architecture v{architecture.version} against requirements and validator findings."
+        if withheld:
+            log_event(
+                logger,
+                "critic_approval_withheld",
+                architecture_version=architecture.version,
+                score=review.score,
+                findings=",".join(withheld),
+            )
+            action += f" Approval withheld: unresolved high/critical validator findings ({', '.join(withheld)})."
         output_summary = f"{verdict} | score={review.score} | issues={len(review.issues)}"
         input_hash: str | None = fingerprint
     except llm_module.LLMInvocationError as exc:

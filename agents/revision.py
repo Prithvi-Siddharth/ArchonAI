@@ -10,12 +10,19 @@ by MAX_REVISIONS to guarantee termination.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from agents import llm as llm_module
 from agents.formatting import _truncate, compact_architecture
 from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
-from models.schemas import Architecture, CriticReview, Requirements, ValidationResult
+from models.schemas import (
+    Architecture,
+    CriticReview,
+    Requirements,
+    ValidationIssue,
+    ValidationResult,
+)
 from tools.architecture_facts import (
     IMPLEMENTED,
     NOT_IMPLEMENTED_PREFIX,
@@ -25,7 +32,13 @@ from tools.architecture_facts import (
     pending_requests,
     verify_changes,
 )
-from tools.revision_guard import Regression, blocking, check_revision
+from tools.revision_guard import (
+    Regression,
+    blocking,
+    check_revision,
+    unimplemented_claims,
+    unresolved_findings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +125,43 @@ necessary -- add a change_log entry "Removed <X> because <reason>" (or "Replaced
 <Y> because <reason>"). A new deterministic validator failure (e.g. a missing backup
 strategy) must be fixed, not justified.
 """
+
+# Appended (once) when a revision did not actually fix the design -- with or
+# without regressions: a blocking validator finding is still there, or a
+# requested change is claimed only in change_log. The
+# rejected attempt is included so the model fixes that attempt instead of
+# starting over.
+UNRESOLVED_CORRECTION_TEMPLATE = """
+
+IMPORTANT: your previous attempt was not accepted because it did not change the actual
+architecture where it had to:
+{problems}
+Your previous attempt (not accepted):
+{attempt}
+Produce the revision again, starting from that attempt and keeping its other improvements.
+Make every fix in the services (purpose or justification) or data_flow themselves, using the
+exact terms given above. Do not claim implementation only in change_log -- a change that is
+not in the services or data_flow is not implemented and will be rejected again.
+"""
+
+# How to resolve each validator rule, in the exact terms the validator looks for.
+_FINDING_FIXES = {
+    "database_without_backups": (
+        "Add automated backups and point-in-time recovery explicitly to the {database} service's "
+        "purpose or justification (use the words 'automated backups' and 'point-in-time recovery')."
+    ),
+    "high_availability_single_az": (
+        "State 'multi-AZ' explicitly in the purpose or justification of the compute and {database} services."
+    ),
+    "high_traffic_without_scaling": "State 'auto scaling' explicitly in the compute service's purpose or justification.",
+    "compute_without_load_balancer": "Add an Application Load Balancer as a service in front of the compute tier.",
+    "sensitive_workload_missing_controls": (
+        "Describe concrete controls in the services: 'encryption' at rest with KMS, IAM least privilege, WAF."
+    ),
+    "public_database_exposure": (
+        "Place the {database} service in a 'private subnet' and state it is 'not publicly accessible'."
+    ),
+}
 
 # Bounds on the history added to the prompt (MAX_REVISIONS keeps it small anyway).
 _MAX_HISTORY_REVIEWS = 4
@@ -200,9 +250,69 @@ def _format_regressions(regressions: list[Regression]) -> str:
     return "\n".join(f"- {r.describe()}" for r in regressions)
 
 
+@dataclass
+class _Verdict:
+    """Why a candidate revision can or cannot be accepted.
+
+    Zero regressions is not enough: the revision must also resolve the
+    blocking validator findings and actually contain the requested changes it
+    claims. (Approval of the whole architecture is still the critic's call.)
+    """
+
+    regressions: list[Regression]
+    unresolved: list[ValidationIssue]
+    unimplemented: list[ChangeCheck]
+
+    @property
+    def regressed(self) -> bool:
+        return bool(blocking(self.regressions))
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(self.unresolved or self.unimplemented)
+
+    @property
+    def acceptable(self) -> bool:
+        return not self.regressed and not self.incomplete
+
+
+def _database_name(architecture: Architecture) -> str:
+    for service in architecture.services:
+        if "database" in service.category.lower():
+            return f"'{service.name}'"
+    return "database"
+
+
+def _format_unresolved(verdict: _Verdict, candidate: Architecture) -> str:
+    database = _database_name(candidate)
+    lines = []
+    for issue in verdict.unresolved:
+        fix = _FINDING_FIXES.get(issue.rule, "Fix it in the services or data_flow.").format(database=database)
+        lines.append(f"- The {issue.rule} validator finding remains unresolved ({issue.message}) {fix}")
+    for check in verdict.unimplemented:
+        lines.append(
+            f"- Claimed in change_log but not in the design: '{_truncate(check.entry, _MAX_ITEM_CHARS)}' "
+            f"(missing from services/data_flow: {', '.join(check.missing)}). Add it to the actual architecture."
+        )
+    return "\n".join(lines)
+
+
+def _correction(verdict: _Verdict, candidate: Architecture, version: int) -> str:
+    """The single corrective addition: regressions to restore, fixes still missing, or both."""
+    text = ""
+    if verdict.regressed:
+        text += CORRECTION_TEMPLATE.format(version=version, regressions=_format_regressions(blocking(verdict.regressions)))
+    if verdict.incomplete:
+        text += UNRESOLVED_CORRECTION_TEMPLATE.format(
+            problems=_format_unresolved(verdict, candidate), attempt=compact_architecture(candidate)
+        )
+    return text
+
+
 def _log_check(
-    regressions: list[Regression], corrected: bool, accepted: bool, checks: list[ChangeCheck] | None = None
+    verdict: _Verdict, corrected: bool, accepted: bool, checks: list[ChangeCheck] | None = None
 ) -> None:
+    regressions = verdict.regressions
     unjustified = blocking(regressions)
     counts = {}
     if checks is not None:
@@ -217,6 +327,9 @@ def _log_check(
         unjustified=len(unjustified),
         justified=len(regressions) - len(unjustified),
         categories=",".join(sorted({r.category for r in unjustified})) or None,
+        unresolved_findings=len(verdict.unresolved),
+        findings=",".join(issue.rule for issue in verdict.unresolved) or None,
+        unimplemented_claims=len(verdict.unimplemented),
         corrected=corrected,
         accepted=accepted,
         **counts,
@@ -232,7 +345,10 @@ def run(state: ArchonState) -> dict:
     (tools/revision_guard.py): if it removes a service or a security,
     availability, DR, backup or networking capability without saying why in
     its change_log -- or fails a validator rule the current version passes --
-    the model gets one corrective attempt. If that still regresses, the
+    the model gets one corrective attempt. The same single attempt is used
+    when the revision leaves a high/critical validator finding unresolved or
+    claims a requested change only in its change_log. If the corrected
+    attempt still regresses or still leaves the problem unresolved, the
     revision is not accepted and the current architecture is kept.
     """
     requirements: Requirements = state["requirements"]
@@ -257,26 +373,28 @@ def run(state: ArchonState) -> dict:
     )
     new_revision_count = state.get("revision_count", 0) + 1
 
-    def attempt(prompt_text: str) -> tuple[Architecture, list[Regression]]:
+    def attempt(prompt_text: str) -> tuple[Architecture, _Verdict]:
         candidate = llm_module.invoke_structured(llm, Architecture, prompt_text)
-        return candidate, check_revision(architecture, candidate, requirements, prior_required_changes)
+        return candidate, _Verdict(
+            regressions=check_revision(architecture, candidate, requirements, prior_required_changes),
+            unresolved=unresolved_findings(architecture, candidate, requirements),
+            unimplemented=unimplemented_claims(candidate, prior_required_changes),
+        )
 
     newly_implemented: list[str] = []
     try:
-        revised, regressions = attempt(prompt)
+        revised, verdict = attempt(prompt)
+        first_verdict = verdict
         corrected = False
-        if blocking(regressions):
+        if not verdict.acceptable:
+            # At most one corrective attempt per revision, whatever the reason.
             corrected = True
-            revised, regressions = attempt(
-                prompt
-                + CORRECTION_TEMPLATE.format(
-                    version=architecture.version, regressions=_format_regressions(blocking(regressions))
-                )
-            )
+            revised, verdict = attempt(prompt + _correction(verdict, revised, architecture.version))
+        regressions = verdict.regressions
         unjustified = blocking(regressions)
 
         if unjustified:
-            _log_check(regressions, corrected, accepted=False)
+            _log_check(verdict, corrected, accepted=False)
             # Accepting it would undo earlier work; keep the current version and
             # let the critic review it again (same fallback as a failed call).
             listed = "; ".join(r.describe() for r in unjustified[:3])
@@ -287,16 +405,34 @@ def run(state: ArchonState) -> dict:
             )
             revised = architecture
             output_summary = "Revision regressed earlier fixes -- architecture unchanged this round."
+        elif verdict.incomplete:
+            _log_check(verdict, corrected, accepted=False)
+            # No regressions, but the blocking problem is still there (or only
+            # claimed in change_log). Accepting it would record fixes that don't
+            # exist; keep the current version, whose validator findings stay
+            # visible to the critic, and let the revision budget decide.
+            problems = [issue.rule for issue in verdict.unresolved] + [
+                f"claimed only in change_log: {_truncate(c.entry, 80)}" for c in verdict.unimplemented
+            ]
+            listed = "; ".join(problems[:3]) + (f"; +{len(problems) - 3} more" if len(problems) > 3 else "")
+            action = (
+                f"Rejected the revised architecture: blocking findings still unresolved after a corrective "
+                f"attempt ({listed}); kept v{architecture.version} and re-submitted it to the critic."
+            )
+            revised = architecture
+            output_summary = "Revision did not resolve blocking findings -- architecture unchanged this round."
         else:
             revised.version = architecture.version + 1
             if not revised.change_log:
                 revised.change_log = list(review.required_changes)
             newly_implemented, checks = _record_verified_changes(revised)
-            _log_check(regressions, corrected, accepted=True, checks=checks)
+            _log_check(verdict, corrected, accepted=True, checks=checks)
             justified = [r for r in regressions if r.justified]
             action = f"Revised architecture to v{revised.version}, addressing {len(review.required_changes)} required changes."
-            if corrected:
+            if corrected and first_verdict.regressed:
                 action += " A first attempt removed earlier fixes and was corrected."
+            elif corrected:
+                action += " A first attempt left blocking findings unresolved and was corrected."
             if justified:
                 action += " Justified removals: " + "; ".join(r.item for r in justified[:4]) + "."
             proposed = sum(1 for c in checks if c.status == PROPOSED)

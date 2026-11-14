@@ -23,14 +23,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from models.schemas import Architecture, Requirements
-from tools.architecture_facts import mentions, service_aliases
+from models.schemas import Architecture, Requirements, ValidationIssue
+from tools.architecture_facts import (
+    NOT_IMPLEMENTED_PREFIX,
+    PROPOSED,
+    ChangeCheck,
+    features_in,
+    mentions,
+    service_aliases,
+    verify_changes,
+)
 from tools.architecture_validator import (
     _AUTOSCALING_TERMS,
     _BACKUP_TERMS,
     _LOAD_BALANCER_TERMS,
     _MULTI_AZ_TERMS,
     _full_text,
+    blocking_findings,
     validate_architecture,
 )
 
@@ -244,3 +253,37 @@ def check_revision(
 def blocking(regressions: list[Regression]) -> list[Regression]:
     """The regressions a revision may not be accepted with: everything not explicitly justified."""
     return [r for r in regressions if not r.justified]
+
+
+# ---------------------------------------------------------------------------
+# Did the revision actually fix what it had to? (separate from regressions)
+# ---------------------------------------------------------------------------
+
+def unresolved_findings(previous: Architecture, revised: Architecture, requirements: Requirements) -> list[ValidationIssue]:
+    """High/critical validator findings the previous version had and the revision still fails.
+
+    Findings the revision newly introduces are regressions (check_revision),
+    not listed here.
+    """
+    # Blocking severities (HIGH/CRITICAL) are defined once, in the validator;
+    # the critic may not approve a design that still has one of these.
+    flagged = {issue.rule for issue in blocking_findings(validate_architecture(previous, requirements))}
+    return [issue for issue in validate_architecture(revised, requirements).issues if issue.rule in flagged]
+
+
+def unimplemented_claims(revised: Architecture, required_changes: list[str]) -> list[ChangeCheck]:
+    """change_log entries claiming a critic-requested feature the revised design doesn't contain.
+
+    A claim only counts as implemented when the feature appears in the design
+    text (summary, services, data flow) -- never because the change_log says
+    so. Claims about things nobody requested are left to the usual
+    "proposed only" marking and don't block.
+    """
+    requested = {feature.name for change in required_changes for feature in features_in(change)}
+    return [
+        check
+        for check in verify_changes(revised.change_log, revised)
+        if check.status == PROPOSED
+        and not check.entry.startswith(NOT_IMPLEMENTED_PREFIX)
+        and requested.intersection(check.missing)
+    ]

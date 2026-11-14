@@ -103,17 +103,30 @@ def _seven_services() -> Architecture:
 
 
 class TestChangeVerification:
-    def test_claimed_secrets_manager_without_adding_it_is_only_proposed(self, monkeypatch):
-        # The model says it added Secrets Manager, but the design doesn't contain it.
+    def test_claimed_secrets_manager_without_adding_it_is_never_implemented(self, monkeypatch):
+        # The model says it added the requested Secrets Manager, but the design
+        # doesn't contain it -- not even after the one corrective attempt.
         claimed_only = _with(change_log=["Added AWS Secrets Manager for DB credentials."])
-        _script_revisions(monkeypatch, claimed_only)
+        prompts = _script_revisions(monkeypatch, claimed_only, claimed_only)
 
         result = revision_agent.run(_state(make_architecture(), ADD_SECRETS))
 
+        assert len(prompts) == 2
         assert result["implemented_changes"] == []
-        assert result["architecture"].change_log == [
-            NOT_IMPLEMENTED_PREFIX + "Added AWS Secrets Manager for DB credentials."
-        ]
+        assert result["architecture"].version == 1  # not accepted
+        assert "Secrets Manager" not in json.dumps(result["architecture"].model_dump())
+        assert "claimed only in change_log" in result["execution_trace"][0]["action"]
+
+    def test_an_unrequested_claim_is_only_marked_proposed(self, monkeypatch):
+        # Nobody asked for Route 53: the claim doesn't block, it is just not counted.
+        claimed_only = _with(change_log=["Added Route 53 failover."])
+        prompts = _script_revisions(monkeypatch, claimed_only)
+
+        result = revision_agent.run(_state(make_architecture(), ADD_SECRETS))
+
+        assert len(prompts) == 1
+        assert result["implemented_changes"] == []
+        assert result["architecture"].change_log == [NOT_IMPLEMENTED_PREFIX + "Added Route 53 failover."]
         assert "0 implemented or removed, 1 proposed only" in result["execution_trace"][0]["action"]
 
     def test_next_revision_is_told_the_proposal_is_still_pending(self, monkeypatch):

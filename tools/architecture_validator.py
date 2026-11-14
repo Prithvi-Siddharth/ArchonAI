@@ -58,6 +58,20 @@ _DATABASE_TERMS = ["rds", "aurora", "dynamodb", "database"]
 _HIGH_VOLUME_HINTS = ["000", "million", "spike", "high", "large"]
 
 
+# Severities that block: a revision that leaves one of these unresolved is not
+# accepted (tools/revision_guard.py), and the critic may not approve a design
+# that still has one (agents/critic.py). MEDIUM findings lower the score and
+# LOW findings are informational; neither blocks on its own.
+BLOCKING_SEVERITIES = (Severity.HIGH, Severity.CRITICAL)
+
+
+def blocking_findings(result: ValidationResult | None) -> list[ValidationIssue]:
+    """The findings in `result` whose severity blocks acceptance and approval."""
+    if result is None:
+        return []
+    return [issue for issue in result.issues if issue.severity in BLOCKING_SEVERITIES]
+
+
 def _full_text(architecture: Architecture) -> str:
     parts = [architecture.summary]
     for service in architecture.services:
