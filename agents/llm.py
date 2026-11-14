@@ -10,6 +10,7 @@ future provider such as Amazon Bedrock can be added later by extending
 from __future__ import annotations
 
 import logging
+import math
 import os
 import random
 import re
@@ -212,6 +213,152 @@ def _provider_error_fields(exc: BaseException) -> dict[str, Any]:
     return {"error_type": type(exc).__name__, "provider_status": status_code, "provider_error_code": code}
 
 
+# ---------------------------------------------------------------------------
+# Rate-limit and failed-generation details (numbers and identifiers only)
+#
+# Groq answers a rejected request with structured headers (Retry-After and,
+# when present, x-ratelimit-*) and a JSON error body whose `type`/`code`
+# are identifiers. The quota numbers (which limit, used, requested) exist
+# only inside the body's free-text `message`, so that one field is parsed
+# defensively for those numbers and a short upper-case limit name -- the
+# message itself (which names the organization and model) is never kept.
+# ---------------------------------------------------------------------------
+
+_LIMIT_NUMBERS = re.compile(
+    r"\((?P<type>[A-Z]{2,8})\)\s*:\s*Limit\s+(?P<limit>\d+)"
+    r"(?:\s*,\s*Used\s+(?P<used>\d+))?(?:\s*,\s*Requested\s+(?P<requested>\d+))?"
+)
+_TRY_AGAIN = re.compile(r"try again in\s+(?P<duration>(?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", re.IGNORECASE)
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+_DURATION_MS = {"ms": 1, "s": 1000, "m": 60_000, "h": 3_600_000}
+_MAX_REJECTION_BODY_BYTES = 64 * 1024
+
+
+def _duration_ms(value: Any) -> int | None:
+    """'7.66s' / '2m59.56s' / '120ms' / '1h2m' -> milliseconds; None if not that shape."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    parts = _DURATION_PART.findall(text)
+    if not parts or "".join(n + u for n, u in parts) != text:
+        return None
+    return round(sum(float(n) * _DURATION_MS[u] for n, u in parts))
+
+
+def _seconds_header_ms(value: Any) -> int | None:
+    """A Retry-After value in seconds ('2', '1.5') -> milliseconds; None if absent or malformed."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(seconds * 1000) if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _int_header(value: Any) -> int | None:
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def _identifier(value: Any) -> str | None:
+    return value if isinstance(value, str) and _ERROR_CODE_PATTERN.fullmatch(value) else None
+
+
+def _error_object(body: Any) -> dict:
+    error = body.get("error") if isinstance(body, dict) else None
+    return error if isinstance(error, dict) else {}
+
+
+def _rejection_details(status: int, headers: Any, body: Any) -> dict[str, Any]:
+    """Numeric quota facts from a 429/413 response. Missing or malformed values are None.
+
+    `body` is the parsed JSON body (or anything else, which is ignored). The
+    error message is only scanned for numbers and the limit's short name.
+    """
+    get = headers.get if hasattr(headers, "get") else (lambda _name: None)
+    error = _error_object(body)
+    message = error.get("message") if isinstance(error.get("message"), str) else ""
+    numbers = _LIMIT_NUMBERS.search(message)
+    try_again = _TRY_AGAIN.search(message)
+    details = {
+        "http_status": status,
+        "provider_error_code": _identifier(error.get("code")),
+        "provider_error_type": _identifier(error.get("type")),
+        "rate_limit_type": numbers.group("type") if numbers else None,
+        "quota_limit": int(numbers.group("limit")) if numbers else None,
+        "quota_used": int(numbers.group("used")) if numbers and numbers.group("used") else None,
+        "quota_requested": int(numbers.group("requested")) if numbers and numbers.group("requested") else None,
+        "retry_after_ms": _seconds_header_ms(get("retry-after")),
+        "message_retry_in_ms": _duration_ms(try_again.group("duration")) if try_again else None,
+        "limit_requests": _int_header(get("x-ratelimit-limit-requests")),
+        "limit_tokens": _int_header(get("x-ratelimit-limit-tokens")),
+        "remaining_requests": _int_header(get("x-ratelimit-remaining-requests")),
+        "remaining_tokens": _int_header(get("x-ratelimit-remaining-tokens")),
+        "reset_requests_ms": _duration_ms(get("x-ratelimit-reset-requests")),
+        "reset_tokens_ms": _duration_ms(get("x-ratelimit-reset-tokens")),
+    }
+    quota = ("rate_limit_type", "quota_limit", "quota_used", "quota_requested")
+    found = sum(details[k] is not None for k in quota)
+    details["quota_details"] = "full" if found == len(quota) else "partial" if found else "unavailable"
+    return details
+
+
+def _failure_category(exc: BaseException) -> str:
+    """A short, fixed category for a failed request (by type, status and error code -- never text)."""
+    from groq import (
+        APIConnectionError,
+        APIStatusError,
+        APITimeoutError,
+        AuthenticationError,
+        RateLimitError,
+    )
+    from langchain_core.exceptions import OutputParserException
+
+    fields = _provider_error_fields(exc)
+    status = _int_or_none(fields["provider_status"])
+    if fields["provider_error_code"] == "tool_use_failed":
+        return "invalid_output"
+    if isinstance(exc, OutputParserException):
+        return "parse_error"
+    if isinstance(exc, RateLimitError) or status == 429:
+        return "rate_limited"
+    if status == 413:
+        return "request_too_large"
+    if isinstance(exc, (APITimeoutError, httpx.TimeoutException)):
+        return "timeout"
+    if isinstance(exc, (APIConnectionError, httpx.TransportError)):
+        return "connection"
+    if isinstance(exc, AuthenticationError) or status in (401, 403):
+        return "auth"
+    if status is not None and status >= 500:
+        return "server_error"
+    if isinstance(exc, APIStatusError) or status is not None:
+        return "client_error"
+    return "other"
+
+
+def _failed_generation_fields(exc: BaseException) -> dict[str, Any]:
+    """For a failed generation: its error type and the *length* of what the model wrote.
+
+    Groq's tool_use_failed body carries the rejected generation; only its
+    character count is kept (never its text). Providers report no token
+    usage for a failed request, so none is logged.
+    """
+    for source in (exc, exc.__cause__):
+        if source is None:
+            continue
+        error = _error_object(getattr(source, "body", None))
+        if error:
+            generation = error.get("failed_generation")
+            return {
+                "provider_error_type": _identifier(error.get("type")),
+                "failed_generation_chars": len(generation) if isinstance(generation, str) else None,
+            }
+    return {}
+
+
 def _log_llm_failure(exc: BaseException, will_retry: bool, **fields: Any) -> None:
     stats = _current_call.get()
     if stats is not None:
@@ -222,6 +369,8 @@ def _log_llm_failure(exc: BaseException, will_retry: bool, **fields: Any) -> Non
         logging.WARNING,
         node=current_node(),
         **_provider_error_fields(exc),
+        failure_category=_failure_category(exc),
+        **_failed_generation_fields(exc),
         will_retry=will_retry,
         **fields,
         **(stats.failure_fields() if stats is not None else {}),
@@ -294,6 +443,8 @@ class _CallStats:
         self.output_tokens: Optional[int] = None
         self.reasoning_tokens: Optional[int] = None
         self.finish_reason: Optional[str] = None
+        self.rate_limited_responses = 0  # HTTP 429/413 responses, including ones the SDK retried
+        self.rate_limit_types: list[str] = []
 
     def note_model(self, provider: Optional[str], model: Optional[str], max_tokens: Optional[int]) -> None:
         self.provider = provider or self.provider
@@ -336,6 +487,12 @@ class _CallStats:
         if _int_or_none(_provider_error_fields(exc)["provider_status"]) in _REJECTED_BEFORE_GENERATION:
             return
         self.failures_with_unreported_usage += 1
+
+    def note_rejection(self, details: dict[str, Any]) -> None:
+        self.rate_limited_responses += 1
+        limit_type = details.get("rate_limit_type")
+        if limit_type and limit_type not in self.rate_limit_types:
+            self.rate_limit_types.append(limit_type)
 
     def note_app_retry(self, waited_seconds: float) -> None:
         self.app_retries += 1
@@ -467,6 +624,8 @@ def _log_call_summary(stats: _CallStats, exc: Optional[BaseException]) -> None:
         reasoning_tokens=stats.reasoning_tokens,
         finish_reason=stats.finish_reason,
         usage_available=stats.usage_available(),
+        rate_limited_responses=stats.rate_limited_responses or None,
+        rate_limit_types=",".join(stats.rate_limit_types) or None,
     )
 
 
@@ -523,6 +682,8 @@ class _CountingTransport(httpx.BaseTransport):
             attempt.finish(type(exc).__name__)
             raise
         attempt.status = response.status_code
+        if response.status_code in _REJECTED_BEFORE_GENERATION:
+            return _inspect_rejection(response, stats, attempt)
         return httpx.Response(
             status_code=response.status_code,
             headers=response.headers,
@@ -532,6 +693,55 @@ class _CountingTransport(httpx.BaseTransport):
 
     def close(self) -> None:
         self._inner.close()
+
+
+def _inspect_rejection(response: httpx.Response, stats: _CallStats, attempt: _HttpAttempt) -> httpx.Response:
+    """Log the quota details of a 429/413, then hand the SDK an identical response.
+
+    The (small) body is read here so its numbers can be logged even when the
+    SDK retries the request itself and never raises. The raw, still-encoded
+    bytes are passed on unchanged with the same headers, so the SDK sees
+    exactly what it would have; inspection errors never affect the call.
+    """
+    try:
+        raw = b"".join(response.stream)
+    except BaseException as exc:
+        attempt.finish(type(exc).__name__)
+        raise
+    finally:
+        close = getattr(response.stream, "close", None)
+        if close is not None:
+            close()
+    attempt.finish()
+    try:
+        body: Any = None
+        if len(raw) <= _MAX_REJECTION_BODY_BYTES:
+            try:
+                body = httpx.Response(response.status_code, headers=response.headers, content=raw).json()
+            except Exception:  # noqa: BLE001 - a non-JSON body just has no details
+                body = None
+        details = _rejection_details(response.status_code, response.headers, body)
+        stats.note_rejection(details)
+        log_event(
+            logger,
+            "llm_http_rate_limited",
+            logging.WARNING,
+            call_id=stats.call_id,
+            node=current_node(),
+            model=stats.model,
+            max_tokens=stats.max_tokens,
+            http_attempt=len(stats.http_attempts),
+            sdk_retry_count=attempt.retry_count,
+            **details,
+        )
+    except Exception:  # noqa: BLE001 - instrumentation must never break an LLM call
+        pass
+    return httpx.Response(
+        status_code=response.status_code,
+        headers=response.headers,
+        content=raw,
+        extensions=response.extensions,
+    )
 
 
 def _instrumented_http_client(inner: Optional[httpx.BaseTransport] = None) -> httpx.Client:
