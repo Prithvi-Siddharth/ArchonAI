@@ -13,13 +13,20 @@ import re
 from graph.observability import log_event
 from graph.state import MAX_REVISIONS, ArchonState, make_trace_entry
 from agents import llm as llm_module
-from agents.formatting import compact_analysis, compact_architecture, compact_cost_analysis, compact_critic_review
+from agents.formatting import (
+    _truncate,
+    compact_analysis,
+    compact_architecture,
+    compact_cost_analysis,
+    compact_critic_review,
+)
 from models.schemas import (
     AnalysisResult,
     Architecture,
     CostAnalysis,
     CriticReview,
     FinalReport,
+    ReportSynthesis,
     Requirements,
 )
 from tools.architecture_facts import (
@@ -69,24 +76,19 @@ Verified facts about the final architecture (a deterministic check of its actual
 Describe only what the final architecture contains. The specialist analyses and the critic's
 required changes are suggestions, not features -- never describe them as part of the design,
 and do not claim a capability listed as NOT in the final architecture. Anything not in the
-final architecture may appear only in final_recommendations, or in critic_findings_summary
-as still open.
+final architecture may appear only in final_recommendations.
 
-Write the final report with these fields:
+Write the final report with these fields (the requirements, services, data flow, cost and
+critic summaries are added separately from the data above -- do not write them):
 - executive_summary: for a non-technical stakeholder
-- requirements_summary: what was asked for, distilled
 - architecture_overview: how the pieces fit together
-- aws_services_summary: the services chosen and why
-- data_flow_summary: how a request flows through the system
 - scalability_strategy: how this scales under load
 - high_availability_strategy: how this stays up during failures
 - security_summary: how this protects data and access
 - reliability_summary: fault tolerance and disaster recovery approach
 - observability_summary: how the system is monitored and debugged
-- cost_summary: cost posture, quoting the estimated monthly range given
 - bottlenecks: realistic potential bottlenecks
 - trade_offs: trade-offs made in this design
-- critic_findings_summary: what the critic found and how it was resolved
 - final_recommendations: concrete next steps for a team implementing this
 
 Hard size limits (the whole report must fit in a small output budget):
@@ -121,8 +123,7 @@ def run(state: ArchonState) -> dict:
         revision_note = (
             f"Note: the maximum of {MAX_REVISIONS} revision cycles was reached before the "
             "critic fully approved this design. Treat the critic's remaining required_changes "
-            "as open follow-up items and say so plainly in critic_findings_summary and "
-            "final_recommendations."
+            "as open follow-up items and say so plainly in final_recommendations."
         )
 
     history: list[CriticReview] = list(state.get("critic_history") or []) or [review]
@@ -159,15 +160,19 @@ def run(state: ArchonState) -> dict:
         open_recommendations="; ".join(open_recommendations[:6]) or "none",
     )
 
+    built = _deterministic_fields(
+        requirements, architecture, cost, review, revision_count, len(state.get("implemented_changes") or [])
+    )
     try:
-        report = llm_module.invoke_structured(llm, FinalReport, prompt)
+        synthesis = llm_module.invoke_structured(llm, ReportSynthesis, prompt)
+        report = FinalReport(**{name: getattr(synthesis, name) for name in ReportSynthesis.model_fields}, **built)
         action = "Synthesized all agent outputs into the final architecture recommendation report."
     except llm_module.LLMInvocationError as exc:
         # This is the terminal node -- there's nowhere left to route to on
         # failure, so fall back to a plain report assembled directly from
         # the structured data already gathered, instead of losing the whole
         # run's work over one failed synthesis call.
-        report = _fallback_report(requirements, architecture, cost, review, revision_note)
+        report = _fallback_report(requirements, architecture, cost, review, revision_note, built)
         action = (
             f"LLM synthesis failed ({llm_module.safe_failure_message(exc)}); "
             "assembled a fallback report directly from agent outputs."
@@ -189,47 +194,126 @@ def run(state: ArchonState) -> dict:
     return {"final_report": report, "execution_trace": [entry]}
 
 
+# ---------------------------------------------------------------------------
+# Report fields built from workflow data (no LLM): they restate facts the
+# workflow already holds, so generating them only spent output tokens.
+# ---------------------------------------------------------------------------
+
+_SERVICE_PURPOSE_CHARS = 70
+
+
+def _requirements_summary(requirements: Requirements) -> str:
+    """What the user asked for: the explicitly stated requirements, else the key figures."""
+    stated = [r.strip().rstrip(".") for r in requirements.explicit_requirements if r.strip()]
+    if stated:
+        return f"{requirements.application_type}: " + "; ".join(stated) + "."
+    return (
+        f"{requirements.application_type} for {requirements.expected_users}, "
+        f"{requirements.concurrent_users} concurrent. {requirements.availability_requirements}"
+    )
+
+
+def _aws_services_summary(architecture: Architecture) -> str:
+    """Every service in the final design, with its role (from the design itself)."""
+    if not architecture.services:
+        return "Services: no services selected."
+    parts = [
+        f"{s.name} ({_truncate(s.purpose.rstrip('.'), _SERVICE_PURPOSE_CHARS)})" if s.purpose.strip() else s.name
+        for s in architecture.services
+    ]
+    return "Services: " + "; ".join(parts) + "."
+
+
+def _data_flow_summary(architecture: Architecture) -> str:
+    steps = sorted(architecture.data_flow, key=lambda s: s.step)
+    return "; ".join(f"{step.source} -> {step.destination}" for step in steps) or "No data flow was specified."
+
+
+def _cost_summary(cost: CostAnalysis) -> str:
+    """The estimator's range and drivers, plus the Cost Agent's first optimization."""
+    text = cost.estimated_monthly_range
+    if cost.major_cost_drivers:
+        text += f"; major cost drivers: {', '.join(cost.major_cost_drivers)}"
+    text += "."
+    if cost.optimizations:
+        # "Recommended" marks it as advice, not a claim about the design.
+        text += f" Recommended first optimization: {cost.optimizations[0].rstrip('.')}."
+    return text
+
+
+def _critic_findings_summary(review: CriticReview, revision_count: int, implemented_count: int) -> str:
+    """Score, verdict, revision status and issue counts -- names no features, so it can't overclaim."""
+    verdict = "approved" if review.approved else "not approved"
+    text = f"Critic score {review.score}/100 ({verdict})"
+    if revision_count:
+        text += f" after {revision_count} revision cycle{'s' if revision_count != 1 else ''}"
+        if not review.approved and revision_count >= MAX_REVISIONS:
+            text += f"; the maximum of {MAX_REVISIONS} was reached"
+    text += "."
+    if implemented_count:
+        text += f" {implemented_count} verified change{'s were' if implemented_count != 1 else ' was'} made during revision."
+    if review.issues:
+        counts = {}
+        for issue in review.issues:
+            counts[issue.severity.value] = counts.get(issue.severity.value, 0) + 1
+        order = ("critical", "high", "medium", "low")
+        by_severity = ", ".join(f"{counts[s]} {s}" for s in order if s in counts)
+        categories = ", ".join(dict.fromkeys(i.category.strip().lower() for i in review.issues if i.category.strip()))
+        text += f" It raised {len(review.issues)} issue{'s' if len(review.issues) != 1 else ''} ({by_severity})"
+        text += f" in {categories}." if categories else "."
+    if review.required_changes and not review.approved:
+        text += " Its required changes remain open; see open_recommendations."
+    return text
+
+
+def _deterministic_fields(
+    requirements: Requirements,
+    architecture: Architecture,
+    cost: CostAnalysis,
+    review: CriticReview,
+    revision_count: int,
+    implemented_count: int,
+) -> dict[str, str]:
+    """The FinalReport fields built from workflow data (the LLM writes the rest)."""
+    return {
+        "requirements_summary": _requirements_summary(requirements),
+        "aws_services_summary": _aws_services_summary(architecture),
+        "data_flow_summary": _data_flow_summary(architecture),
+        "cost_summary": _cost_summary(cost),
+        "critic_findings_summary": _critic_findings_summary(review, revision_count, implemented_count),
+    }
+
+
 def _fallback_report(
     requirements: Requirements,
     architecture: Architecture,
     cost: CostAnalysis,
     review: CriticReview,
     revision_note: str,
+    built: dict[str, str],
 ) -> FinalReport:
     """Assemble a FinalReport with no LLM call, from data already on hand.
 
     Used only if the LLM synthesis call itself fails -- less polished than a
     real synthesis, but guarantees the run still produces a usable report
-    instead of nothing.
+    instead of nothing. The data-derived fields (`built`) are the same as in
+    a synthesized report.
     """
-    service_names = ", ".join(s.name for s in architecture.services) or "no services selected"
     return FinalReport(
         executive_summary=(
             f"Architecture for {requirements.application_type}, v{architecture.version}. "
             f"{architecture.summary}"
         ),
-        requirements_summary=(
-            f"{requirements.application_type} for {requirements.expected_users}, "
-            f"{requirements.concurrent_users} concurrent. {requirements.availability_requirements}"
-        ),
         architecture_overview=architecture.summary,
-        aws_services_summary=f"Services: {service_names}.",
-        data_flow_summary="; ".join(
-            f"{step.source} -> {step.destination}" for step in sorted(architecture.data_flow, key=lambda s: s.step)
-        )
-        or "No data flow was specified.",
         scalability_strategy=requirements.scalability_requirements,
         high_availability_strategy=requirements.availability_requirements,
         security_summary=requirements.security_requirements,
         reliability_summary="See the reliability analysis in the execution trace for details.",
         observability_summary="See the execution trace for observability recommendations.",
-        cost_summary=cost.estimated_monthly_range,
         bottlenecks=["Report synthesis failed -- review the execution trace for full analysis detail."],
         trade_offs=["Report synthesis failed -- see individual agent analyses in the execution trace."],
-        critic_findings_summary=(
-            f"Critic score: {review.score}/100, approved={review.approved}. {revision_note}"
-        ).strip(),
         final_recommendations=list(review.required_changes) or ["Re-run ArchonAI to get a fully synthesized report."],
+        **built,
     )
 
 
@@ -278,11 +362,13 @@ def _open_recommendations(architecture: Architecture, review: CriticReview, hist
     """Everything requested or proposed that the final architecture does not contain.
 
     The final review's required changes are open by definition (the critic
-    just reviewed this exact architecture); earlier rounds' requests are open
-    if they name a service/capability the design still lacks; and change_log
-    entries that only proposed something stay proposals.
+    just reviewed this exact architecture) -- also when it approved the
+    design, since an approval can still list non-blocking changes (e.g. for
+    a MEDIUM finding); earlier rounds' requests are open if they name a
+    service/capability the design still lacks; and change_log entries that
+    only proposed something stay proposals.
     """
-    items: list[str] = [] if review.approved else list(review.required_changes)
+    items: list[str] = list(review.required_changes)
     earlier = [c for past in history if past is not review for c in past.required_changes]
     items += pending_requests(earlier, architecture)
     items += [

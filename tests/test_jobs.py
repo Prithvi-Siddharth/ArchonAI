@@ -179,7 +179,7 @@ def test_job_api_never_returns_provider_error_text_from_agent_fallbacks(monkeypa
     the stored result nor the API response contains any of the provider's text."""
     from groq import APIStatusError
 
-    from models.schemas import Architecture, CriticReview, FinalReport
+    from models.schemas import Architecture, CriticReview, FinalReport, ReportSynthesis
 
     leaked = "LEAKED-FAILED-GENERATION"
     body = {"error": {"message": "Failed to call a function.", "code": "tool_use_failed", "failed_generation": leaked}}
@@ -205,7 +205,7 @@ def test_job_api_never_returns_provider_error_text_from_agent_fallbacks(monkeypa
     def invoke(llm, schema, prompt):
         from graph.observability import current_node
 
-        failing = schema in (CriticReview, FinalReport) or current_node() == "architecture_revision"
+        failing = schema in (CriticReview, FinalReport, ReportSynthesis) or current_node() == "architecture_revision"
         if failing and not isinstance(llm, _Failing):
             return real_invoke_structured(_Failing(), schema, prompt)
         return mocked(llm, schema, prompt)

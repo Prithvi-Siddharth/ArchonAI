@@ -160,6 +160,16 @@ def make_cost_analysis() -> CostAnalysis:
     )
 
 
+def make_cost_insights():
+    """What the Cost Agent's LLM returns (the qualitative part of make_cost_analysis())."""
+    from models.schemas import CostInsights
+
+    cost = make_cost_analysis()
+    return CostInsights(
+        relative_cost_breakdown=cost.relative_cost_breakdown, optimizations=cost.optimizations, trade_offs=cost.trade_offs
+    )
+
+
 def make_critic_review(approved: bool, score: int | None = None) -> CriticReview:
     if score is None:
         score = 92 if approved else 45
@@ -194,3 +204,11 @@ def make_final_report() -> FinalReport:
         critic_findings_summary="Summary of what the critic found and how it was resolved.",
         final_recommendations=["Proceed to a proof-of-concept deployment in a staging account."],
     )
+
+
+def make_report_synthesis():
+    """What the Final Report's LLM returns (the synthesized fields of make_final_report())."""
+    from models.schemas import ReportSynthesis
+
+    report = make_final_report()
+    return ReportSynthesis(**{name: getattr(report, name) for name in ReportSynthesis.model_fields})

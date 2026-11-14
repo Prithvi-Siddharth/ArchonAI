@@ -19,12 +19,16 @@ from models.schemas import (
     Architecture,
     ArchitecturePlan,
     CostAnalysis,
+    CostInsights,
     CriticReview,
     FinalReport,
+    ReportSynthesis,
     Requirements,
 )
 
 from .conftest import (
+    make_cost_insights,
+    make_report_synthesis,
     make_architecture,
     make_architecture_plan,
     make_analysis,
@@ -98,6 +102,8 @@ def _dummy_for_schema(schema, critic_verdicts, call_counter):
         return make_analysis()
     if schema is CostAnalysis:
         return make_cost_analysis()
+    if schema is CostInsights:
+        return make_cost_insights()
     if schema is CriticReview:
         idx = min(call_counter["critic_calls"], len(critic_verdicts) - 1)
         approved = critic_verdicts[idx]
@@ -105,6 +111,8 @@ def _dummy_for_schema(schema, critic_verdicts, call_counter):
         return make_critic_review(approved=approved)
     if schema is FinalReport:
         return make_final_report()
+    if schema is ReportSynthesis:
+        return make_report_synthesis()
     raise AssertionError(f"No dummy factory registered for schema {schema}")
 
 

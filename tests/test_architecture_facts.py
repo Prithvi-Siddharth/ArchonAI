@@ -329,16 +329,18 @@ class TestFinalReport:
         assert report.bottlenecks == ["Aurora write throughput at peak"]
 
     def test_present_services_and_hedged_statements_are_kept(self, monkeypatch):
+        # Checked on fields the LLM still writes (the services and critic
+        # summaries are now built from the design and the review).
         llm_report = _report_with(
-            aws_services_summary="ALB, ECS on auto scaling, Aurora with backups, ElastiCache (Redis).",
-            critic_findings_summary="Rejected 70/100; DynamoDB for catalog reads remains an open follow-up.",
+            scalability_strategy="ALB, ECS on auto scaling, Aurora with backups, ElastiCache (Redis).",
+            architecture_overview="Multi-AZ ALB and ECS. DynamoDB for catalog reads remains an open follow-up.",
         )
         _capture(monkeypatch, llm_report)
 
         report = report_agent.run(_report_state(make_architecture(), ADD_DYNAMODB))["final_report"]
 
-        assert report.aws_services_summary == llm_report.aws_services_summary
-        assert "DynamoDB for catalog reads remains an open follow-up" in report.critic_findings_summary
+        assert report.scalability_strategy == llm_report.scalability_strategy
+        assert "DynamoDB for catalog reads remains an open follow-up" in report.architecture_overview
 
     def test_recommendations_stay_separate_from_implemented_features(self, monkeypatch):
         architecture = _with(

@@ -11,8 +11,8 @@ from __future__ import annotations
 from agents import llm as llm_module
 from agents.formatting import compact_architecture
 from graph.state import ArchonState, make_trace_entry
-from models.schemas import Architecture, CostAnalysis, Requirements
-from tools.cost_estimator import estimate_cost
+from models.schemas import Architecture, CostAnalysis, CostInsights, Requirements
+from tools.cost_estimator import CostEstimate, estimate_cost
 
 PROMPT_TEMPLATE = """You are a FinOps specialist reviewing a proposed AWS architecture.
 
@@ -29,14 +29,16 @@ these numbers as ground truth -- do not recompute or contradict them):
 - Assumptions: {assumptions}
 
 Using this baseline, provide:
-- estimated_monthly_range: restate the range above, clearly labeled as an estimate
-- major_cost_drivers: the drivers above, described in plain language
 - relative_cost_breakdown: a mapping of component -> relative weight (e.g. "high", "medium", "low")
 - optimizations: concrete ways to reduce cost without violating the requirements
 - trade_offs: cost-vs-capability trade-offs made in this design
 
 Be concise: short phrases per list item, not paragraphs.
 """
+
+
+def _monthly_range(estimate: CostEstimate) -> str:
+    return f"${estimate.monthly_low:,} - ${estimate.monthly_high:,} per month (educational estimate)"
 
 
 def run(state: ArchonState) -> dict:
@@ -55,10 +57,17 @@ def run(state: ArchonState) -> dict:
         major_drivers=", ".join(estimate.major_cost_drivers) or "none identified",
         assumptions="; ".join(estimate.assumptions),
     )
-    analysis = llm_module.invoke_structured(llm, CostAnalysis, prompt)
-    # Keep the headline range and drivers tied to the deterministic tool, not the LLM's paraphrase.
-    analysis.estimated_monthly_range = f"${estimate.monthly_low:,} - ${estimate.monthly_high:,} per month (educational estimate)"
-    analysis.major_cost_drivers = estimate.major_cost_drivers
+    # The LLM writes only the qualitative part; the headline range and drivers
+    # come straight from the deterministic estimator (never generated, then
+    # overwritten -- that only spent output tokens).
+    insights = llm_module.invoke_structured(llm, CostInsights, prompt)
+    analysis = CostAnalysis(
+        estimated_monthly_range=_monthly_range(estimate),
+        major_cost_drivers=list(estimate.major_cost_drivers),
+        relative_cost_breakdown=insights.relative_cost_breakdown,
+        optimizations=insights.optimizations,
+        trade_offs=insights.trade_offs,
+    )
 
     entry = make_trace_entry(
         node="Cost Agent",

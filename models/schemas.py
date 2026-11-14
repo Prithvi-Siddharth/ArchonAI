@@ -165,6 +165,22 @@ class CostAnalysis(BaseModel):
     )
 
 
+class CostInsights(BaseModel):
+    """What the Cost Agent's LLM writes: only the qualitative analysis.
+
+    The headline range and cost drivers come from the deterministic cost
+    estimator, so the model is never asked to restate them. The agent
+    combines both into the public CostAnalysis.
+    """
+
+    relative_cost_breakdown: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of component -> relative cost weight, e.g. {'compute': 'high'}.",
+    )
+    optimizations: list[str] = Field(description="Possible cost optimizations.")
+    trade_offs: list[str] = Field(description="Cost-vs-capability trade-offs made.")
+
+
 class Severity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -203,6 +219,27 @@ class ValidationResult(BaseModel):
 
     passed: bool = Field(description="True if no issues were found.")
     issues: list[ValidationIssue] = Field(default_factory=list)
+
+
+class ReportSynthesis(BaseModel):
+    """What the Final Report's LLM writes: only the fields that need synthesis.
+
+    requirements_summary, aws_services_summary, data_flow_summary,
+    cost_summary, critic_findings_summary and open_recommendations restate
+    data the workflow already holds, so the report agent builds them in code
+    and assembles the public FinalReport.
+    """
+
+    executive_summary: str
+    architecture_overview: str
+    scalability_strategy: str
+    high_availability_strategy: str
+    security_summary: str
+    reliability_summary: str
+    observability_summary: str
+    bottlenecks: list[str]
+    trade_offs: list[str]
+    final_recommendations: list[str]
 
 
 class FinalReport(BaseModel):

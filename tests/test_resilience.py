@@ -1012,15 +1012,18 @@ def test_report_prompt_sets_hard_size_limits_and_asks_for_specifics(monkeypatch)
 
 
 def test_successful_critic_and_report_are_unchanged(monkeypatch):
-    from .conftest import make_final_report
+    from .conftest import make_report_synthesis
 
     review = make_critic_review(approved=True)
     _capture_prompt(monkeypatch, review)
     assert critic_agent.run(_base_state())["critic_review"] is review
 
-    report = make_final_report()
-    _capture_prompt(monkeypatch, report)
-    assert report_agent.run(_base_state(critic_review=review))["final_report"] is report
+    synthesis = make_report_synthesis()
+    _capture_prompt(monkeypatch, synthesis)
+    report = report_agent.run(_base_state(critic_review=review))["final_report"]
+    # Every synthesized field is passed through untouched; the rest are built from the data.
+    for name in type(synthesis).model_fields:
+        assert getattr(report, name) == getattr(synthesis, name)
 
 
 # ---------------------------------------------------------------------------
