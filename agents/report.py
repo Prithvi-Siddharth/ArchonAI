@@ -26,6 +26,7 @@ from tools.architecture_facts import (
     FEATURES_BY_NAME,
     NOT_IMPLEMENTED_PREFIX,
     PROPOSED,
+    SERVICE,
     absent_features,
     features_in,
     pending_requests,
@@ -296,15 +297,36 @@ def _open_recommendations(architecture: Architecture, review: CriticReview, hist
     return unique[:_MAX_OPEN_RECOMMENDATIONS]
 
 
+# "X over Y", "X instead of Y", ... : Y is the alternative that was NOT chosen.
+# The alternative runs to the next colon, semicolon, comma or sentence end.
+_COMPARISON = re.compile(
+    r"\b(?:over|instead\s+of|rather\s+than|vs\.?|versus|compared\s+(?:to|with))\s+(?P<alternative>[^:;,.]*)",
+    re.IGNORECASE,
+)
+
+
 def _unsupported(fragment: str, present: set[str]) -> list[str]:
-    """Catalog features a fragment asserts that the design doesn't contain."""
+    """Catalog features a fragment asserts that the design doesn't contain.
+
+    A *service* named only as the alternative in a comparison ("Fargate over
+    EC2") is not a claim that the design has it, so it is exempt. Everything
+    else is still checked: the subject ("Fargate"), any service also named
+    outside the comparison, and every capability -- even inside the
+    alternative ("spread over a secondary region" still claims cross-region).
+    """
     if _HEDGE.search(fragment):
         return []
-    return [f.name for f in features_in(fragment) if f.name not in present]
+    alternatives = " ".join(m.group("alternative") for m in _COMPARISON.finditer(fragment))
+    claimed_outside = {f.name for f in features_in(_COMPARISON.sub(" ", fragment))}
+    exempt = {
+        f.name for f in features_in(alternatives) if f.kind == SERVICE and f.name not in claimed_outside
+    }
+    return [f.name for f in features_in(fragment) if f.name not in present and f.name not in exempt]
 
 
 def _fragments(text: str) -> list[str]:
-    return [part for part in re.split(r"(?<=[.;!?])\s+", text.strip()) if part]
+    # Not after "vs.": "Fargate vs. EC2" is one comparison, not two sentences.
+    return [part for part in re.split(r"(?<=[.;!?])(?<!\bvs\.)\s+", text.strip()) if part]
 
 
 def _replacement_text(
