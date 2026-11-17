@@ -10,7 +10,8 @@ by MAX_REVISIONS to guarantee termination.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 
 from agents import llm as llm_module
 from agents.formatting import _truncate, compact_architecture
@@ -18,11 +19,13 @@ from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import (
     Architecture,
+    ArchitectureDelta,
     CriticReview,
     Requirements,
     ValidationIssue,
     ValidationResult,
 )
+from tools.architecture_delta import InvalidDeltaError, apply_delta, service_id
 from tools.architecture_facts import (
     IMPLEMENTED,
     NOT_IMPLEMENTED_PREFIX,
@@ -32,7 +35,10 @@ from tools.architecture_facts import (
     pending_requests,
     verify_changes,
 )
-from tools.architecture_validator import databases_without_backups
+from tools.architecture_validator import (
+    databases_without_backups,
+    validate_architecture,
+)
 from tools.revision_guard import (
     Regression,
     blocking,
@@ -50,7 +56,23 @@ logger = logging.getLogger(__name__)
 # let the critic evaluate it again instead, so the run still terminates with
 # a report rather than crashing outright.
 
-PROMPT_TEMPLATE = """You are an AWS solutions architect revising a rejected architecture.
+# How the revision returns its result. "delta" (default): only what changes
+# (ArchitectureDelta), merged into the current design in code
+# (tools/architecture_delta.py) -- in live runs ~40% fewer revision output
+# tokens, no output cut off at the token cap, and an unchanged entry can't be
+# dropped by accident. "full": a complete Architecture, as before -- kept as
+# the rollback option. Both go through exactly the same checks. Read at call time.
+OUTPUT_MODE_ENV = "REVISION_OUTPUT_MODE"
+OUTPUT_FULL = "full"
+OUTPUT_DELTA = "delta"
+
+
+def output_mode() -> str:
+    """The configured output mode: "full" only when set explicitly; unset or anything else means "delta"."""
+    return OUTPUT_FULL if os.getenv(OUTPUT_MODE_ENV, "").strip().lower() == OUTPUT_FULL else OUTPUT_DELTA
+
+
+_CONTEXT = """You are an AWS solutions architect revising a rejected architecture.
 
 Original Requirements:
 {requirements}
@@ -73,7 +95,9 @@ Outstanding issues to fix now (latest review of version {version}):
 - Required changes: {required_changes}
 - Issues: {issues}
 - Deterministic validator findings: {validator_findings}
+"""
 
+_FULL_INSTRUCTIONS = """
 Produce a revised architecture that concretely addresses every outstanding required change
 above. Keep everything that already worked well -- do not change parts of the design that
 were not flagged as problems. In change_log, list exactly what changed and why, tied
@@ -108,6 +132,79 @@ Keep key properties explicit in the text where they apply, using these exact ter
 multi-AZ, auto scaling, load balancer, backups, encryption, private subnet.
 
 This is a working design document, not a narrative report.
+"""
+
+PROMPT_TEMPLATE = _CONTEXT + _FULL_INSTRUCTIONS
+
+# Delta mode: the same context (the architecture is shown with IDs S1, S2, ...),
+# but the model returns only its changes. The rules are the full mode's,
+# restated for a change set.
+_DELTA_INSTRUCTIONS = """
+Return ONLY what changes, as a change set against the current architecture above. Every
+service entry you do not mention is kept exactly as it is -- do not restate unchanged entries.
+- updated_services: {{id, service}} for each existing entry you change, using its ID exactly
+  as shown (S1, S2, ...), with the complete new entry (name, category, purpose, justification).
+  Update an entry only if its text must change -- never restate an unchanged entry, and never
+  send the whole design.
+- added_services: complete new entries.
+- removed_services: {{id, reason}}, only for an explicit technical reason. A removed service
+  must not be named anywhere else afterwards: update the summary, data_flow or any entry that
+  mentions it.
+- data_flow: the complete new data flow, only if it changes; otherwise omit it.
+- summary: a new one-sentence summary (at most 30 words), only if it changes; otherwise omit it.
+- change_log: exactly what changed and why, tied directly to the critic's required changes,
+  at most 5 entries. Every service or capability a change_log entry names must appear in the
+  services or data_flow after your changes -- a change that is only described in change_log
+  does not count as implemented. Increment nothing yourself; the version is set by the caller.
+
+Address every outstanding required change above. Do not change parts of the design that were
+not flagged as problems.
+
+Preserve earlier fixes -- no regressions:
+- Keep every previously implemented change and every existing security, availability,
+  disaster-recovery, backup and networking control (e.g. Secrets Manager, KMS, WAF,
+  multi-AZ, cross-region replicas, backups, per-AZ NAT gateways, private subnets). When you
+  update an entry, keep every control it already describes unless a change requires otherwise.
+- If the latest required changes seem to conflict with an earlier fix, keep the earlier
+  fix unless the conflict is real, and explain the choice in change_log.
+
+Size limits (after your changes):
+- At most 7 service entries. Combine closely related services into one entry
+  (e.g. "Amazon CloudFront + AWS WAF"). An 8th is allowed only if a required change needs a
+  new service that cannot share an entry -- say why in change_log, and keep data_flow to at
+  most 5 steps.
+- At most 6 data_flow steps, covering only the main request path.
+- Each purpose/justification/description/change_log entry: one sentence, at most 12 words.
+
+Keep key properties explicit in the text where they apply, using these exact terms:
+multi-AZ, auto scaling, load balancer, backups, encryption, private subnet.
+"""
+
+DELTA_PROMPT_TEMPLATE = _CONTEXT + _DELTA_INSTRUCTIONS
+
+# The single correction in delta mode is a change set applied on top of the
+# rejected attempt, so it only has to carry the fix. (An attempt that could
+# not be applied at all is redone against the current architecture.)
+DELTA_CORRECTION_TEMPLATE = """
+
+IMPORTANT: your previous change set was applied, but the result was not accepted:
+{problems}
+The result of your previous change set (its IDs are the ones to use now):
+{attempt}
+{added_note}Return a change set against THIS result that fixes every problem above. Make each fix in the
+services (purpose or justification) or data_flow themselves, using the exact terms given -- a
+change only described in change_log does not count. Restore anything lost, or -- only if
+removing it is technically necessary -- remove it explicitly with a reason. A new
+deterministic validator failure (e.g. a missing backup strategy) must be fixed, not justified.
+Its change_log needs only the new changes.
+"""
+
+INVALID_DELTA_CORRECTION_TEMPLATE = """
+
+IMPORTANT: your previous change set could not be applied:
+{problems}
+Return the change set again, against the current architecture above (version {version},
+IDs S1, S2, ... as shown there), fixing these problems.
 """
 
 # The hard limits above exist for the same reason as in agents/architecture.py:
@@ -264,6 +361,8 @@ class _Verdict:
     regressions: list[Regression]
     unresolved: list[ValidationIssue]
     unimplemented: list[ChangeCheck]
+    # Delta mode only: why the change set could not be applied at all.
+    invalid: list[str] = field(default_factory=list)
 
     @property
     def regressed(self) -> bool:
@@ -275,12 +374,14 @@ class _Verdict:
 
     @property
     def acceptable(self) -> bool:
-        return not self.regressed and not self.incomplete
+        return not self.invalid and not self.regressed and not self.incomplete
 
     @property
     def reasons(self) -> list[str]:
         """Why this attempt can't be accepted, in a fixed order (empty if it can)."""
         reasons = []
+        if self.invalid:
+            reasons.append(REASON_INVALID_DELTA)
         if self.regressed:
             reasons.append(REASON_REGRESSION)
         if self.unresolved:
@@ -294,11 +395,14 @@ class _Verdict:
 REASON_REGRESSION = "regression"
 REASON_UNRESOLVED_FINDING = "unresolved_finding"
 REASON_UNIMPLEMENTED_CLAIM = "unimplemented_claim"
+REASON_INVALID_DELTA = "invalid_delta"
 
 
 def _correction_note(first: _Verdict) -> str:
     """Trace sentence saying why the first attempt was rejected before it was corrected."""
     phrases = []
+    if first.invalid:
+        phrases.append(f"returned a change set that could not be applied ({_truncate(first.invalid[0], 100)})")
     if first.regressed:
         phrases.append("introduced an unjustified regression")
     if first.unresolved:
@@ -316,16 +420,20 @@ def _database_name(architecture: Architecture) -> str:
     return "database"
 
 
-def _format_unresolved(verdict: _Verdict, candidate: Architecture) -> str:
-    database = _database_name(candidate)
+def _fix_hint(rule: str, candidate: Architecture) -> str:
+    """How to resolve a validator rule in `candidate`, naming its own services where it can."""
     # The validator's own list of databases lacking backups, by name (never
     # "the first Database-category service", which may be the wrong one).
     uncovered = ", ".join(f"'{name}'" for name in databases_without_backups(candidate)) or "the database service"
+    return _FINDING_FIXES.get(rule, "Fix it in the services or data_flow.").format(
+        database=_database_name(candidate), uncovered=uncovered
+    )
+
+
+def _format_unresolved(verdict: _Verdict, candidate: Architecture) -> str:
     lines = []
     for issue in verdict.unresolved:
-        fix = _FINDING_FIXES.get(issue.rule, "Fix it in the services or data_flow.").format(
-            database=database, uncovered=uncovered
-        )
+        fix = _fix_hint(issue.rule, candidate)
         lines.append(f"- The {issue.rule} validator finding remains unresolved ({issue.message}) {fix}")
     for check in verdict.unimplemented:
         lines.append(
@@ -345,6 +453,56 @@ def _correction(verdict: _Verdict, candidate: Architecture, version: int) -> str
             problems=_format_unresolved(verdict, candidate), attempt=compact_architecture(candidate)
         )
     return text
+
+
+def _delta_correction(
+    verdict: _Verdict,
+    attempt: Architecture | None,
+    current: Architecture,
+    requirements: Requirements,
+) -> str:
+    """The single corrective addition in delta mode."""
+    if verdict.invalid or attempt is None:
+        return INVALID_DELTA_CORRECTION_TEMPLATE.format(
+            problems="\n".join(f"- {_truncate(p, _MAX_ITEM_CHARS)}" for p in verdict.invalid), version=current.version
+        )
+    problems = []
+    if verdict.regressed:
+        unjustified = blocking(verdict.regressions)
+        problems.append(
+            f"- Lost without an explicit justification (compared with version {current.version}):\n"
+            + _format_regressions(unjustified)
+        )
+        # A new validator failure: say exactly what failed and how to fix it in
+        # this attempt (e.g. which database still needs its own backups).
+        new_rules = {r.item for r in unjustified if r.kind == "new_validator_issue"}
+        for issue in validate_architecture(attempt, requirements).issues:
+            if issue.rule in new_rules:
+                problems.append(f"- To fix {issue.rule}: {issue.message} {_fix_hint(issue.rule, attempt)}")
+    if verdict.incomplete:
+        problems.append(_format_unresolved(verdict, attempt))
+    # Entries the attempt added are already in it: repeating them as additions
+    # would duplicate them. Name their IDs so a fix updates them instead.
+    current_names = {s.name for s in current.services}
+    added_ids = [service_id(i) for i, s in enumerate(attempt.services) if s.name not in current_names]
+    added_note = (
+        f"Entries {', '.join(added_ids)} were added by your previous change set and are already in it -- "
+        "do not add them again; to change one, update it by its ID.\n"
+        if added_ids
+        else ""
+    )
+    return DELTA_CORRECTION_TEMPLATE.format(
+        problems="\n".join(problems), attempt=compact_architecture(attempt, with_ids=True), added_note=added_note
+    )
+
+
+def _combined_change_log(first: list[str], second: list[str]) -> list[str]:
+    """The attempt's change_log followed by its correction's, without duplicates."""
+    combined: list[str] = []
+    for entry in [*first, *second]:
+        if entry not in combined:
+            combined.append(entry)
+    return combined
 
 
 def _log_check(
@@ -375,6 +533,7 @@ def _log_check(
             "first_categories": ",".join(sorted({r.category for r in first_unjustified})) or None,
             "first_findings": ",".join(issue.rule for issue in first.unresolved) or None,
             "first_unimplemented_claims": len(first.unimplemented),
+            "first_invalid_delta": len(first.invalid) or None,
         }
     log_event(
         logger,
@@ -386,6 +545,8 @@ def _log_check(
         unresolved_findings=len(verdict.unresolved),
         findings=",".join(issue.rule for issue in verdict.unresolved) or None,
         unimplemented_claims=len(verdict.unimplemented),
+        invalid_delta=len(verdict.invalid) or None,
+        output_mode=output_mode(),
         corrected=corrected,
         accepted=accepted,
         **first_fields,
@@ -415,11 +576,13 @@ def run(state: ArchonState) -> dict:
     implemented: list[str] = list(state.get("implemented_changes") or [])
     prior_required_changes = [change for past in history for change in past.required_changes]
 
+    mode = output_mode()
     llm = llm_module.get_llm(temperature=0.3, max_tokens=llm_module.ARCHITECTURE_MAX_TOKENS)
-    prompt = PROMPT_TEMPLATE.format(
+    template = DELTA_PROMPT_TEMPLATE if mode == OUTPUT_DELTA else PROMPT_TEMPLATE
+    prompt = template.format(
         requirements=requirements.model_dump_json(),
         version=architecture.version,
-        architecture=compact_architecture(architecture),
+        architecture=compact_architecture(architecture, with_ids=mode == OUTPUT_DELTA),
         review_history=_format_review_history(history),
         implemented_changes=_format_implemented_changes(implemented),
         pending_changes=_format_pending(_still_pending(history, architecture)),
@@ -430,8 +593,19 @@ def run(state: ArchonState) -> dict:
     )
     new_revision_count = state.get("revision_count", 0) + 1
 
-    def attempt(prompt_text: str) -> tuple[Architecture, _Verdict]:
-        candidate = llm_module.invoke_structured(llm, Architecture, prompt_text)
+    def attempt(prompt_text: str, base: Architecture) -> tuple[Architecture | None, _Verdict]:
+        if mode == OUTPUT_DELTA:
+            # Merged in code, so every check below sees a complete design.
+            delta = llm_module.invoke_structured(llm, ArchitectureDelta, prompt_text)
+            try:
+                candidate = apply_delta(base, delta)
+            except InvalidDeltaError as exc:
+                return None, _Verdict(regressions=[], unresolved=[], unimplemented=[], invalid=exc.problems)
+            if base is not architecture:  # a correction on top of the rejected attempt
+                candidate.change_log = _combined_change_log(base.change_log, candidate.change_log)
+        else:
+            candidate = llm_module.invoke_structured(llm, Architecture, prompt_text)
+        # Always judged against the current architecture, never the attempt.
         return candidate, _Verdict(
             regressions=check_revision(architecture, candidate, requirements, prior_required_changes),
             unresolved=unresolved_findings(architecture, candidate, requirements),
@@ -440,17 +614,32 @@ def run(state: ArchonState) -> dict:
 
     newly_implemented: list[str] = []
     try:
-        revised, verdict = attempt(prompt)
+        revised, verdict = attempt(prompt, architecture)
         first_verdict = verdict
         corrected = False
         if not verdict.acceptable:
             # At most one corrective attempt per revision, whatever the reason.
             corrected = True
-            revised, verdict = attempt(prompt + _correction(verdict, revised, architecture.version))
+            if mode == OUTPUT_DELTA:
+                base = revised if revised is not None else architecture
+                correction = _delta_correction(verdict, revised, architecture, requirements)
+                revised, verdict = attempt(prompt + correction, base)
+            else:
+                revised, verdict = attempt(prompt + _correction(verdict, revised, architecture.version), architecture)
         regressions = verdict.regressions
         unjustified = blocking(regressions)
 
-        if unjustified:
+        if verdict.invalid:
+            _log_check(verdict, corrected, accepted=False, first=first_verdict)
+            listed = "; ".join(_truncate(p, 100) for p in verdict.invalid[:2])
+            more = f"; +{len(verdict.invalid) - 2} more" if len(verdict.invalid) > 2 else ""
+            action = (
+                f"Rejected the revision: its change set could not be applied ({listed}{more}); "
+                f"kept v{architecture.version} and re-submitted it to the critic."
+            )
+            revised = architecture
+            output_summary = "Revision change set could not be applied -- architecture unchanged this round."
+        elif unjustified:
             _log_check(verdict, corrected, accepted=False, first=first_verdict)
             # Accepting it would undo earlier work; keep the current version and
             # let the critic review it again (same fallback as a failed call).

@@ -17,6 +17,7 @@ from graph.workflow import WorkflowError, _route_after_critic, run_workflow
 from models.schemas import (
     AnalysisResult,
     Architecture,
+    ArchitectureDelta,
     ArchitecturePlan,
     CostAnalysis,
     CostInsights,
@@ -98,6 +99,8 @@ def _dummy_for_schema(schema, critic_verdicts, call_counter):
         return make_architecture_plan()
     if schema is Architecture:
         return make_architecture()
+    if schema is ArchitectureDelta:
+        return ArchitectureDelta()  # delta-mode revision: no changes
     if schema is AnalysisResult:
         return make_analysis()
     if schema is CostAnalysis:

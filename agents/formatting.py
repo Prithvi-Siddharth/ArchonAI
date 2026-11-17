@@ -30,16 +30,21 @@ def compact_analysis(analysis: AnalysisResult, max_reasoning_chars: int = 300) -
 
 
 def compact_architecture(
-    architecture: Architecture, max_field_chars: int = 150, include_change_log: bool = True
+    architecture: Architecture, max_field_chars: int = 150, include_change_log: bool = True, with_ids: bool = False
 ) -> str:
-    """Render an Architecture as a short, bounded-length text block."""
+    """Render an Architecture as a short, bounded-length text block.
+
+    with_ids numbers the services S1, S2, ... (as tools/architecture_delta.py
+    expects) for a revision that returns only its changes.
+    """
     lines = [
         f"Summary (v{architecture.version}): {_truncate(architecture.summary, 300)}",
         "Services:",
     ]
-    for service in architecture.services:
+    for index, service in enumerate(architecture.services):
+        bullet = f"S{index + 1}." if with_ids else "-"
         lines.append(
-            f"- {service.name} ({service.category}): {_truncate(service.purpose, max_field_chars)} "
+            f"{bullet} {service.name} ({service.category}): {_truncate(service.purpose, max_field_chars)} "
             f"| Why: {_truncate(service.justification, max_field_chars)}"
         )
     if architecture.data_flow:

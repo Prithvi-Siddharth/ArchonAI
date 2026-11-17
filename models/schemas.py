@@ -135,6 +135,43 @@ class Architecture(BaseModel):
     )
 
 
+class ServiceUpdate(BaseModel):
+    """Replace one existing service entry, identified by its ID in the prompt."""
+
+    id: str = Field(description="ID of the existing service entry to replace, exactly as shown, e.g. 'S3'.")
+    service: AWSService = Field(description="The complete new entry (name, category, purpose, justification).")
+
+
+class ServiceRemoval(BaseModel):
+    """Remove one existing service entry, with the technical reason."""
+
+    id: str = Field(description="ID of the existing service entry to remove, exactly as shown, e.g. 'S5'.")
+    reason: str = Field(description="Why removing it is technically necessary, in one short sentence.")
+
+
+class ArchitectureDelta(BaseModel):
+    """What a revision changes -- the LLM-facing alternative to returning a full Architecture.
+
+    Only the changed parts: entries not mentioned are kept exactly as they
+    are. tools/architecture_delta.py merges this into the current
+    Architecture, so every check still sees a complete design. Not part of
+    the API.
+    """
+
+    updated_services: list[ServiceUpdate] = Field(
+        default_factory=list, description="Existing entries to replace in full, by ID."
+    )
+    added_services: list[AWSService] = Field(default_factory=list, description="New service entries.")
+    removed_services: list[ServiceRemoval] = Field(
+        default_factory=list, description="Existing entries to remove, by ID, each with its reason."
+    )
+    data_flow: list[DataFlowStep] | None = Field(
+        default=None, description="The complete new data flow, only if it changes; omit to keep it."
+    )
+    summary: str | None = Field(default=None, description="A new summary, only if it changes; omit to keep it.")
+    change_log: list[str] = Field(default_factory=list, description="What changed in this revision and why.")
+
+
 class AnalysisResult(BaseModel):
     """Generic structured output for a specialist analysis agent (compute, db, network, etc.)."""
 

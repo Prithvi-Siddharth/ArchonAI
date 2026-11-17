@@ -20,6 +20,11 @@ import dotenv
 # module, so their `from dotenv import load_dotenv` picks up the wrapper.
 os.environ["CLOUDWATCH_ENABLED"] = "false"
 os.environ["CLOUDWATCH_METRICS_ENABLED"] = "false"
+# Likewise the revision output mode: the existing revision tests script full
+# architectures, so the suite pins "full" (the rollback mode) regardless of
+# .env; tests/test_revision_delta_mode.py sets or unsets it per test to cover
+# the "delta" default.
+os.environ["REVISION_OUTPUT_MODE"] = "full"
 _real_load_dotenv = dotenv.load_dotenv
 
 
