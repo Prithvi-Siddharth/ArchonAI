@@ -1,15 +1,23 @@
 """Architecture Designer agent.
 
 Third node in the graph. Designs the initial AWS architecture from the
-requirements and plan produced by the previous two nodes. This is the node
-that performs a genuine LLM tool-calling loop: the model searches the AWS
-service knowledge base for candidate services before committing to a design,
-so service selection is grounded in real service data instead of guesswork.
+requirements and plan produced by the previous two nodes. Service selection
+is grounded in a curated AWS service knowledge base (data/aws_services.json)
+instead of guesswork, in one of two ways (DESIGNER_RESEARCH_MODE):
+
+- "llm" (default): a genuine LLM tool-calling loop -- the model searches the
+  knowledge base for candidate services before committing to a design.
+- "digest": the knowledge base is small (26 services), so a compact one-line
+  digest of all of it is given to the design call directly: no research LLM
+  calls, and the design sees every candidate (the tool-calling notes are cut
+  at MAX_RESEARCH_CHARS, usually after about one query's results).
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import re
 from typing import Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -18,11 +26,40 @@ from agents import llm as llm_module
 from graph.observability import log_event
 from graph.state import ArchonState, make_trace_entry
 from models.schemas import Architecture, ArchitecturePlan, Requirements
-from tools.aws_service_search import search_aws_services_tool
+from tools.aws_service_search import (
+    list_categories,
+    search_aws_services_tool,
+    service_digest,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 2
+
+# How the Designer gathers its service research. Read at call time.
+RESEARCH_MODE_ENV = "DESIGNER_RESEARCH_MODE"
+RESEARCH_LLM = "llm"
+RESEARCH_DIGEST = "digest"
+
+
+def research_mode() -> str:
+    """The configured research mode: "digest" only when set explicitly; anything else means "llm"."""
+    return RESEARCH_DIGEST if os.getenv(RESEARCH_MODE_ENV, "").strip().lower() == RESEARCH_DIGEST else RESEARCH_LLM
+
+
+# Digest mode: optional concerns that map one-to-one to a knowledge-base
+# category, left out only when the plan says plainly they are not needed.
+# Networking, compute, database, security and reliability are always listed.
+_OPTIONAL_CATEGORIES = {
+    "caching": "Caching",
+    "messaging": "Messaging",
+    "storage": "Storage",
+    "observability": "Observability",
+}
+_NOT_NEEDED = re.compile(
+    r"\b(?:no|not|none)\b[^.;]*\b(?:required|needed|necessary|applicable)\b|^\s*n/?a\b", re.IGNORECASE
+)
+DIGEST_HEADER = "AWS service knowledge base (curated; choose only what this workload actually needs):"
 
 RESEARCH_TEMPERATURE = 0.2
 # One corrective retry after a tool_use_failed, sampled a little hotter (the
@@ -202,12 +239,37 @@ def _run_tool_calling_research(requirements: Requirements, plan: ArchitecturePla
     return combined, fallback_used
 
 
+def _digest_research(plan: ArchitecturePlan) -> str:
+    """The research section for digest mode: the knowledge base itself, minus unneeded optional categories."""
+    skipped = [
+        category for field, category in _OPTIONAL_CATEGORIES.items() if _NOT_NEEDED.search(getattr(plan, field, "") or "")
+    ]
+    categories = [c for c in list_categories() if c not in skipped]
+    digest = service_digest(categories)
+    log_event(
+        logger,
+        "designer_research",
+        mode=RESEARCH_DIGEST,
+        services=digest.count("\n") + 1 if digest else 0,
+        chars=len(digest),
+        skipped_categories=",".join(skipped) or None,
+    )
+    text = f"{DIGEST_HEADER}\n{digest}"
+    if skipped:
+        text += f"\n(Not listed: {', '.join(skipped)} -- the plan says these are not needed.)"
+    return text
+
+
 def run(state: ArchonState) -> dict:
     """Design the initial Architecture from requirements and architecture_plan."""
     requirements: Requirements = state["requirements"]
     plan: ArchitecturePlan = state["architecture_plan"]
 
-    research, research_fallback = _run_tool_calling_research(requirements, plan)
+    mode = research_mode()
+    if mode == RESEARCH_DIGEST:
+        research, research_fallback = _digest_research(plan), False
+    else:
+        research, research_fallback = _run_tool_calling_research(requirements, plan)
 
     llm = llm_module.get_llm(temperature=0.3, max_tokens=llm_module.ARCHITECTURE_MAX_TOKENS)
     prompt = DESIGN_PROMPT_TEMPLATE.format(
@@ -218,10 +280,16 @@ def run(state: ArchonState) -> dict:
     architecture = llm_module.invoke_structured(llm, Architecture, prompt)
     architecture.version = 1
 
-    action = (
-        f"Searched the AWS service knowledge base and designed the initial "
-        f"architecture with {len(architecture.services)} services."
-    )
+    if mode == RESEARCH_DIGEST:
+        action = (
+            f"Designed the initial architecture with {len(architecture.services)} services "
+            "from the AWS service knowledge base digest."
+        )
+    else:
+        action = (
+            f"Searched the AWS service knowledge base and designed the initial "
+            f"architecture with {len(architecture.services)} services."
+        )
     if research_fallback:
         action += " The AWS service search failed, so the design used only the research gathered before it."
     entry = make_trace_entry(

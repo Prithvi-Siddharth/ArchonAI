@@ -25,6 +25,10 @@ os.environ["CLOUDWATCH_METRICS_ENABLED"] = "false"
 # .env; tests/test_revision_delta_mode.py sets or unsets it per test to cover
 # the "delta" default.
 os.environ["REVISION_OUTPUT_MODE"] = "full"
+# And the Designer's research mode: the existing Designer tests script the
+# LLM tool-calling research, so the suite pins "llm" regardless of .env;
+# tests/test_designer_digest.py covers "digest".
+os.environ["DESIGNER_RESEARCH_MODE"] = "llm"
 _real_load_dotenv = dotenv.load_dotenv
 
 

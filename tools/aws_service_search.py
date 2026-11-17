@@ -65,6 +65,29 @@ def list_categories() -> list[str]:
     return sorted({service["category"] for service in _load_services()})
 
 
+def service_digest(categories: list[str] | None = None) -> str:
+    """The knowledge base as one compact line per service, optionally limited to `categories`.
+
+    Name, category, description, top strength and top limitation -- what the
+    Architecture Designer needs to pick and justify services. The whole
+    knowledge base fits in ~5,500 characters, so the Designer can see every
+    candidate without an LLM deciding what to search for.
+    """
+    lines = []
+    for service in _load_services():
+        if categories is not None and service.get("category") not in categories:
+            continue
+        line = f"- {service['name']} ({service.get('category', 'Other')}): {service.get('description', '').strip()}"
+        strengths = service.get("strengths") or []
+        limitations = service.get("limitations") or []
+        if strengths:
+            line += f" Strength: {strengths[0]}."
+        if limitations:
+            line += f" Limitation: {limitations[0]}."
+        lines.append(line)
+    return "\n".join(lines)
+
+
 MAX_TOOL_RESULTS = 6
 
 
