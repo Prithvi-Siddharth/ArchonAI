@@ -1,75 +1,8 @@
 @import 'tailwindcss';
+@import './tokens.css';
 
-/*
- * Theme tokens. Components use only these semantic colors (bg-surface,
- * text-muted-foreground, border-border, ...), so switching the theme is just
- * toggling the `dark` class on <html> -- no per-component dark: variants.
- */
-
+/* Theme switching is class-based (`.dark` on <html>), not media-query based. */
 @custom-variant dark (&:where(.dark, .dark *));
-
-:root {
-  --background: #fafafa;
-  --surface: #ffffff;
-  --surface-muted: #f4f4f5;
-  --foreground: #18181b;
-  --muted-foreground: #71717a;
-  --border: #e4e4e7;
-  --border-strong: #d4d4d8;
-
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-foreground: #ffffff;
-
-  --success: #15803d;
-  --warning: #b45309;
-  --danger: #b91c1c;
-  --info: #1d4ed8;
-
-  color-scheme: light;
-}
-
-.dark {
-  --background: #09090b;
-  --surface: #111113;
-  --surface-muted: #1c1c1f;
-  --foreground: #f4f4f5;
-  --muted-foreground: #a1a1aa;
-  --border: #27272a;
-  --border-strong: #3f3f46;
-
-  /* --primary* is shared with light: white text on it keeps AA contrast in both themes. */
-
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --danger: #f87171;
-  --info: #60a5fa;
-
-  color-scheme: dark;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-surface: var(--surface);
-  --color-surface-muted: var(--surface-muted);
-  --color-foreground: var(--foreground);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-
-  --color-primary: var(--primary);
-  --color-primary-hover: var(--primary-hover);
-  --color-primary-foreground: var(--primary-foreground);
-
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-danger: var(--danger);
-  --color-info: var(--info);
-
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-}
 
 @layer base {
   html,
@@ -79,7 +12,7 @@
   }
 
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply bg-background font-sans text-body text-foreground antialiased;
   }
 
   *,
@@ -89,6 +22,11 @@
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-primary;
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+
+  /* Modal and drawer backdrops (native <dialog>). */
+  dialog::backdrop {
+    background-color: var(--overlay, rgb(0 0 0 / 0.5));
   }
 }

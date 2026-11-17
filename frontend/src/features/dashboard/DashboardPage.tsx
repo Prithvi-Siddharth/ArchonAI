@@ -1,15 +1,12 @@
 import { Activity, CircleCheck, CircleX, Plus } from 'lucide-react'
 import { Link } from 'react-router'
 
-import { Badge } from '@/components/ui/Badge'
-import { buttonVariants } from '@/components/ui/Button'
-import { PageHeader } from '@/components/ui/PageHeader'
+import { Badge, buttonVariants, PageHeader, StatCard } from '@/components/ui'
 import { formatNumber, formatPercent } from '@/utils/format'
 
 import { NewArchitectureCta } from './NewArchitectureCta'
 import { placeholderJobStats, placeholderRecentArchitectures } from './placeholder-data'
 import { RecentArchitectures } from './RecentArchitectures'
-import { StatCard } from './StatCard'
 
 export function DashboardPage() {
   // Placeholder data until the API is connected -- see placeholder-data.ts.
@@ -30,7 +27,7 @@ export function DashboardPage() {
         }
       />
 
-      <dl className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Total generations" value={formatNumber(stats.total)} detail="All jobs submitted" icon={Activity} />
         <StatCard
           label="Successful jobs"
@@ -46,7 +43,7 @@ export function DashboardPage() {
           icon={CircleX}
           tone="danger"
         />
-      </dl>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="min-w-0 lg:col-span-2">

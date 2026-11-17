@@ -1,19 +1,15 @@
-import { Badge, type BadgeTone } from '@/components/ui/Badge'
+import { StatusBadge, type Status } from '@/components/ui'
 import type { JobStatus } from '@/types/architecture'
 
-const STATUS: Record<JobStatus, { label: string; tone: BadgeTone }> = {
-  queued: { label: 'Queued', tone: 'neutral' },
-  running: { label: 'Running', tone: 'info' },
-  succeeded: { label: 'Succeeded', tone: 'success' },
-  failed: { label: 'Failed', tone: 'danger' },
+/** Backend job states mapped onto the design system's statuses, keeping the backend's wording. */
+const JOB_STATUS: Record<JobStatus, { status: Status; label: string }> = {
+  queued: { status: 'queued', label: 'Queued' },
+  running: { status: 'running', label: 'Running' },
+  succeeded: { status: 'completed', label: 'Succeeded' },
+  failed: { status: 'failed', label: 'Failed' },
 }
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {
-  const { label, tone } = STATUS[status]
-  return (
-    <Badge tone={tone}>
-      <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
-      {label}
-    </Badge>
-  )
+  const { status: mapped, label } = JOB_STATUS[status]
+  return <StatusBadge status={mapped} label={label} />
 }

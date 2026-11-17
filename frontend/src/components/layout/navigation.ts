@@ -27,11 +27,20 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 ]
 
-/** The section and link a path belongs to, or null for an unknown path. */
-export function findNavLocation(pathname: string): { section: NavSection; item: NavItem } | null {
+/** Development-only pages: reachable by URL, never listed in the sidebar. */
+export const DEV_PAGES = [{ section: 'Development', label: 'Components', to: '/dev/components' }]
+
+const matches = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`)
+
+/** Breadcrumb section and page label for a path, or null for an unknown path. */
+export function findPageMeta(pathname: string): { section: string; label: string } | null {
   for (const section of NAV_SECTIONS) {
-    const item = section.items.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`))
-    if (item) return { section, item }
+    const item = section.items.find(({ to }) => matches(pathname, to))
+    if (item) return { section: section.title, label: item.label }
+  }
+  if (import.meta.env.DEV) {
+    const page = DEV_PAGES.find(({ to }) => matches(pathname, to))
+    if (page) return { section: page.section, label: page.label }
   }
   return null
 }

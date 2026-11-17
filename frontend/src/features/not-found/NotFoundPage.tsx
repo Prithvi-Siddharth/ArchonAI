@@ -13,7 +13,7 @@ export function NotFoundPage() {
         title="Page not found"
         description="This page doesn't exist. Check the address or go back to the dashboard."
         action={
-          <Link to="/dashboard" className={buttonVariants({ variant: 'secondary' })}>
+          <Link to="/dashboard" className={buttonVariants({ variant: 'outline' })}>
             Go to dashboard
           </Link>
         }
