@@ -19,6 +19,7 @@ import { downloadJson } from '@/utils/download'
 import { shortId } from '@/utils/format'
 
 import { useJob } from '../useJob'
+import { AnalysesTab } from './analyses/AnalysesTab'
 import { ArchitectureTab } from './architecture/ArchitectureTab'
 import { CostTab } from './cost/CostTab'
 import { ReviewTab } from './review/ReviewTab'
@@ -112,6 +113,8 @@ function ResultsView({ result, tab, onTabChange }: { result: ArchitectureResult;
           <CostTab result={result} />
         ) : tab === 'review' ? (
           <ReviewTab result={result} />
+        ) : tab === 'analyses' ? (
+          <AnalysesTab result={result} />
         ) : (
           <TabPlaceholder tab={tab} />
         )}

@@ -122,6 +122,12 @@ describe('ResultsPage with a result', () => {
     expect(screen.getByRole('tab', { name: 'Cost' }).getAttribute('aria-selected')).toBe('true')
     cleanup()
 
+    renderResults('/architectures/job-1/results?tab=analyses')
+    expect(await screen.findByRole('heading', { name: 'Specialist analyses' })).toBeTruthy() // Stage 4B-5 replaced the placeholder
+    expect(screen.getByRole('tab', { name: 'Analyses' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByText(/coming soon/)).toBeNull()
+    cleanup()
+
     renderResults('/architectures/job-1/results?tab=nonsense')
     expect(await screen.findByRole('heading', { name: 'Executive summary' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true')
