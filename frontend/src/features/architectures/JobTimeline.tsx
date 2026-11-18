@@ -1,10 +1,9 @@
 import { Check, LoaderCircle, Minus, X } from 'lucide-react'
 
-import type { JobStatusResponse } from '@/types/api'
 import { cn } from '@/utils/cn'
 import { formatTime } from '@/utils/format'
 
-import type { JobPhase } from './job-phase'
+import type { JobPhase, JobProgress } from './job-phase'
 
 type StepState = 'complete' | 'current' | 'upcoming' | 'failed' | 'skipped'
 
@@ -26,7 +25,7 @@ const SR_STATE: Record<StepState, string> = {
 }
 
 /** Queued -> Running -> Completed (or Failed), from the job's phase and timestamps. */
-export function timelineSteps(job: JobStatusResponse, phase: JobPhase): Step[] {
+export function timelineSteps(job: JobProgress, phase: JobPhase): Step[] {
   const queued = { label: 'Queued', time: job.created_at }
   const running = { label: 'Running', time: job.started_at }
   const done = { label: phase === 'failed' ? 'Failed' : 'Completed', time: job.finished_at }
@@ -75,11 +74,11 @@ function StepIcon({ state, index }: { state: StepState; index: number }) {
   return <span className="font-mono text-meta" aria-hidden="true">{index + 1}</span>
 }
 
-export function JobTimeline({ job, phase }: { job: JobStatusResponse; phase: JobPhase }) {
+export function JobTimeline({ job, phase, label = 'Job progress' }: { job: JobProgress; phase: JobPhase; label?: string }) {
   const steps = timelineSteps(job, phase)
 
   return (
-    <ol aria-label="Job progress" className="grid grid-cols-3">
+    <ol aria-label={label} className="grid grid-cols-3">
       {steps.map((step, index) => (
         <li
           key={step.label}

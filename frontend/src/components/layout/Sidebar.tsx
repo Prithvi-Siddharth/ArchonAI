@@ -2,6 +2,7 @@ import { Layers, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
 import { NavLink } from 'react-router'
 
 import { Button, Dialog, Tooltip } from '@/components/ui'
+import { useActiveJobCount } from '@/features/activity/useActivity'
 import { useUIStore } from '@/stores/ui.store'
 import { cn } from '@/utils/cn'
 
@@ -21,6 +22,27 @@ export function Brand({ collapsed = false }: { collapsed?: boolean }) {
   )
 }
 
+/** "2" next to Activity while jobs are in progress; a dot on the icon when the sidebar is collapsed. */
+function ActiveJobsBadge({ collapsed }: { collapsed: boolean }) {
+  const count = useActiveJobCount()
+  if (count === 0) return null
+  const srText = `, ${count} ${count === 1 ? 'job' : 'jobs'} in progress`
+  if (collapsed) {
+    return (
+      <>
+        <span aria-hidden="true" className="absolute top-1.5 right-1.5 size-2 rounded-full bg-info motion-safe:animate-pulse" />
+        <span className="sr-only">{srText}</span>
+      </>
+    )
+  }
+  return (
+    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-info/15 px-1.5 text-meta font-medium text-info tabular-nums">
+      <span aria-hidden="true">{count > 99 ? '99+' : count}</span>
+      <span className="sr-only">{srText}</span>
+    </span>
+  )
+}
+
 function SidebarNav({ collapsed = false, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="flex-1 space-y-6 overflow-x-hidden overflow-y-auto px-3 py-5">
@@ -32,7 +54,7 @@ function SidebarNav({ collapsed = false, onNavigate }: { collapsed?: boolean; on
             <p className="px-3 pb-2 text-overline text-muted-foreground uppercase">{section.title}</p>
           )}
           <ul className="space-y-0.5">
-            {section.items.map(({ label, to, icon: Icon }) => (
+            {section.items.map(({ label, to, icon: Icon, showActiveJobs }) => (
               <li key={to}>
                 <Tooltip content={label} side="right" disabled={!collapsed} describeTrigger={false} className="flex w-full">
                   <NavLink
@@ -40,7 +62,7 @@ function SidebarNav({ collapsed = false, onNavigate }: { collapsed?: boolean; on
                     onClick={onNavigate}
                     className={({ isActive }) =>
                       cn(
-                        'flex h-control-md w-full items-center gap-3 rounded-md text-body transition-colors',
+                        'relative flex h-control-md w-full items-center gap-3 rounded-md text-body transition-colors',
                         collapsed ? 'justify-center' : 'px-3',
                         isActive
                           ? 'bg-surface-muted font-medium text-foreground'
@@ -52,6 +74,7 @@ function SidebarNav({ collapsed = false, onNavigate }: { collapsed?: boolean; on
                       <>
                         <Icon className={cn('size-4 shrink-0', isActive && 'text-primary')} aria-hidden="true" />
                         <span className={cn('truncate', collapsed && 'sr-only')}>{label}</span>
+                        {showActiveJobs && <ActiveJobsBadge collapsed={collapsed} />}
                       </>
                     )}
                   </NavLink>

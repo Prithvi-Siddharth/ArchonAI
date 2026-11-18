@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router'
 
 import { AppLayout } from '@/components/layout/AppLayout'
+import { ActivityPage } from '@/features/activity/ActivityPage'
 import { Spinner } from '@/components/ui'
 import { ArchitectureHistoryPage } from '@/features/architectures/ArchitectureHistoryPage'
 import { JobPage } from '@/features/architectures/JobPage'
@@ -55,6 +56,7 @@ export const router = createBrowserRouter([
       // Static paths above ("new", "history") take precedence over this one.
       { path: 'architectures/:jobId', element: <JobPage /> },
       { path: 'architectures/:jobId/results', element: <ResultsPage /> },
+      { path: 'activity', element: <ActivityPage /> },
       { path: 'settings', element: <SettingsPage /> },
       ...devRoutes,
       { path: '*', element: <NotFoundPage /> },

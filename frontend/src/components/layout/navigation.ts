@@ -1,9 +1,11 @@
-import { History, LayoutDashboard, Settings, SquarePlus, type LucideIcon } from 'lucide-react'
+import { Activity, History, LayoutDashboard, Settings, SquarePlus, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   label: string
   to: string
   icon: LucideIcon
+  /** Show how many of the user's jobs are in progress next to the link. */
+  showActiveJobs?: boolean
 }
 
 export interface NavSection {
@@ -19,6 +21,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
       { label: 'New Architecture', to: '/architectures/new', icon: SquarePlus },
       { label: 'Architecture History', to: '/architectures/history', icon: History },
+      { label: 'Activity', to: '/activity', icon: Activity, showActiveJobs: true },
     ],
   },
   {

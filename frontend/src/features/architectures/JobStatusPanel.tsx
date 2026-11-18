@@ -4,11 +4,10 @@ import { Link } from 'react-router'
 
 import { buttonVariants, Card, CardContent, Progress } from '@/components/ui'
 import { TONE_SOFT, TONE_TEXT, type Tone } from '@/components/ui/tones'
-import type { JobStatusResponse } from '@/types/api'
 import { cn } from '@/utils/cn'
 import { formatDuration } from '@/utils/format'
 
-import { isTakingLong, type JobPhase } from './job-phase'
+import { isTakingLong, type JobPhase, type JobProgress } from './job-phase'
 import { JobTimeline } from './JobTimeline'
 import { POLL_INTERVAL_MS } from './useJob'
 
@@ -21,7 +20,7 @@ const PHASE: Record<JobPhase, { title: string; tone: Tone; icon: LucideIcon; spi
   failed: { title: 'Generation failed', tone: 'danger', icon: CircleX },
 }
 
-function phaseMessage(job: JobStatusResponse, phase: JobPhase): string {
+function phaseMessage(job: JobProgress, phase: JobPhase): string {
   switch (phase) {
     case 'queued':
       return 'The job is in the queue and starts as soon as a worker is free.'
@@ -48,16 +47,21 @@ function Notice({ tone, children }: { tone: Tone; children: ReactNode }) {
 }
 
 interface JobStatusPanelProps {
-  job: JobStatusResponse
+  job: JobProgress
   phase: JobPhase
   now: number
   /** When the status was last read successfully (ms). */
   updatedAt: number
   /** Set when the latest refresh failed; the panel keeps showing the last known status. */
   refreshError?: string
+  /** Shown above the status, e.g. which job this is when several panels share a page. */
+  context?: ReactNode
+  /** Heading level of the status title; 3 when the panel sits under another h2. */
+  headingLevel?: 2 | 3
 }
 
-export function JobStatusPanel({ job, phase, now, updatedAt, refreshError }: JobStatusPanelProps) {
+export function JobStatusPanel({ job, phase, now, updatedAt, refreshError, context, headingLevel = 2 }: JobStatusPanelProps) {
+  const Heading = headingLevel === 3 ? 'h3' : 'h2'
   const { title, tone, icon: Icon, spin } = PHASE[phase]
   const active = phase !== 'succeeded' && phase !== 'failed'
   const retrying = phase === 'retry-waiting' || phase === 'retry-running'
@@ -65,13 +69,14 @@ export function JobStatusPanel({ job, phase, now, updatedAt, refreshError }: Job
   return (
     <Card>
       <CardContent className="space-y-5 py-5">
+        {context && <div className="border-b border-border pb-4">{context}</div>}
         <div className="flex items-start gap-3">
           <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-md', TONE_SOFT[tone])}>
             <Icon className={cn('size-5', TONE_TEXT[tone], spin && 'motion-safe:animate-spin')} aria-hidden="true" />
           </span>
           {/* Announced when the phase changes. */}
           <div className="min-w-0" aria-live="polite" aria-atomic="true">
-            <h2 className="text-section-title">{title}</h2>
+            <Heading className="text-section-title">{title}</Heading>
             <p className="mt-0.5 text-muted-foreground">{phaseMessage(job, phase)}</p>
           </div>
         </div>

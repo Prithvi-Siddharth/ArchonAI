@@ -17,7 +17,13 @@ export type JobPhase =
   | 'succeeded'
   | 'failed'
 
-export function jobPhase(job: JobStatusResponse): JobPhase {
+/**
+ * The fields a job's progress is worked out from. A job's status reply and a
+ * history row (GET /jobs) both have them, so either can be shown as progress.
+ */
+export type JobProgress = Pick<JobStatusResponse, 'job_id' | 'status' | 'attempts' | 'created_at' | 'started_at' | 'finished_at' | 'error'>
+
+export function jobPhase(job: JobProgress): JobPhase {
   switch (job.status) {
     case 'queued':
       return job.error ? 'retry-waiting' : 'queued'
@@ -31,7 +37,7 @@ export function jobPhase(job: JobStatusResponse): JobPhase {
 }
 
 /** Finished jobs never change again: the backend refuses status changes after succeeded/failed. */
-export function isFinalJob(job: JobStatusResponse | undefined): boolean {
+export function isFinalJob(job: JobProgress | undefined): boolean {
   return job?.status === 'succeeded' || job?.status === 'failed'
 }
 
@@ -46,7 +52,7 @@ export const LONG_RUNNING_MS = 15 * 60 * 1000
  * an attempt running past the time limit, or a first wait for a worker that
  * long. (The backend reports no time for a retry wait, so that isn't timed.)
  */
-export function isTakingLong(job: JobStatusResponse, now: number): boolean {
+export function isTakingLong(job: JobProgress, now: number): boolean {
   const phase = jobPhase(job)
   const since =
     phase === 'running' || phase === 'retry-running' ? job.started_at : phase === 'queued' ? job.created_at : null
