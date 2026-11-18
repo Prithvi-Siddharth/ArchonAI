@@ -112,7 +112,7 @@ describe('ResultsPage with a result', () => {
     await user.click(screen.getByRole('button', { name: 'Open the Review tab' }))
     expect(screen.getByRole('tab', { name: 'Review' }).getAttribute('aria-selected')).toBe('true')
     expect(router.state.location.search).toBe('?tab=review')
-    expect(screen.getByText('Review: coming soon')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Review summary' })).toBeTruthy() // Stage 4B-4 replaced the placeholder
   })
 
   it('opens the tab named in ?tab= and falls back to Overview for unknown values', async () => {
