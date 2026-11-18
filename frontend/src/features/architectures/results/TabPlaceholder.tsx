@@ -5,8 +5,7 @@ import { Card, EmptyState } from '@/components/ui'
 import type { ResultTab } from './results-tabs'
 
 /** Temporary content for tabs implemented in later Stage 4B steps. */
-const UPCOMING: Record<Exclude<ResultTab, 'overview'>, { label: string; content: string; step: string }> = {
-  architecture: { label: 'Architecture', content: 'the data-flow diagram, its steps and the AWS services', step: '4B-2' },
+const UPCOMING: Record<Exclude<ResultTab, 'overview' | 'architecture'>, { label: string; content: string; step: string }> = {
   cost: { label: 'Cost', content: 'the cost estimate, drivers, breakdown and optimizations', step: '4B-3' },
   review: { label: 'Review', content: 'the critic review, validation results, open recommendations and revisions', step: '4B-3' },
   analyses: { label: 'Analyses', content: 'the five specialist analyses', step: '4B-4' },
@@ -14,7 +13,7 @@ const UPCOMING: Record<Exclude<ResultTab, 'overview'>, { label: string; content:
   trace: { label: 'Trace', content: 'the step-by-step execution trace', step: '4B-4' },
 }
 
-export function TabPlaceholder({ tab }: { tab: Exclude<ResultTab, 'overview'> }) {
+export function TabPlaceholder({ tab }: { tab: Exclude<ResultTab, 'overview' | 'architecture'> }) {
   const { label, content, step } = UPCOMING[tab]
   return (
     <Card>

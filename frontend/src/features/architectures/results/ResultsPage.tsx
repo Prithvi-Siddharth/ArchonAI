@@ -19,6 +19,7 @@ import { downloadJson } from '@/utils/download'
 import { shortId } from '@/utils/format'
 
 import { useJob } from '../useJob'
+import { ArchitectureTab } from './architecture/ArchitectureTab'
 import { OverviewTab } from './OverviewTab'
 import { parseResultTab, RESULT_TABS, type ResultTab } from './results-tabs'
 import { ResultsSummary } from './ResultsSummary'
@@ -101,7 +102,13 @@ function ResultsView({ result, tab, onTabChange }: { result: ArchitectureResult;
         value={tab}
         onValueChange={(id) => onTabChange(parseResultTab(id))}
       >
-        {tab === 'overview' ? <OverviewTab result={result} /> : <TabPlaceholder tab={tab} />}
+        {tab === 'overview' ? (
+          <OverviewTab result={result} />
+        ) : tab === 'architecture' ? (
+          <ArchitectureTab result={result} />
+        ) : (
+          <TabPlaceholder tab={tab} />
+        )}
       </Tabs>
     </div>
   )

@@ -135,7 +135,7 @@ describe('ResultsPage with a result', () => {
     await user.keyboard('{ArrowRight}')
     expect(screen.getByRole('tab', { name: 'Architecture' }).getAttribute('aria-selected')).toBe('true')
     expect(router.state.location.search).toBe('?tab=architecture')
-    expect(screen.getByText('Architecture: coming soon')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Data-flow diagram' })).toBeTruthy() // Stage 4B-2 replaced the placeholder
   })
 
   it('shows the Overview content', async () => {
