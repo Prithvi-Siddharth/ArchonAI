@@ -1,4 +1,4 @@
-import { CircleAlert, CircleCheck, CircleX, Clock, LoaderCircle, RotateCw, type LucideIcon } from 'lucide-react'
+import { ArrowRight, CircleAlert, CircleCheck, CircleX, Clock, LoaderCircle, RotateCw, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 
@@ -32,7 +32,7 @@ function phaseMessage(job: JobStatusResponse, phase: JobPhase): string {
     case 'retry-running':
       return `Attempt ${job.attempts} is running after a temporary problem.`
     case 'succeeded':
-      return 'The architecture was generated successfully. A viewer for the full results is coming in a later update.'
+      return 'The architecture was generated successfully.'
     case 'failed':
       return 'The job stopped and will not be retried.'
   }
@@ -116,6 +116,13 @@ export function JobStatusPanel({ job, phase, now, updatedAt, refreshError }: Job
               </p>
             )}
           </Notice>
+        )}
+
+        {phase === 'succeeded' && (
+          <Link to={`/architectures/${encodeURIComponent(job.job_id)}/results`} className={buttonVariants()}>
+            View results
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
         )}
 
         {phase === 'failed' && (

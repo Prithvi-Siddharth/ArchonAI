@@ -77,6 +77,10 @@ describe('page title and breadcrumb for job pages', () => {
     expect(findPageMeta('/architectures/7f3c9a21-5d4e-4b8a-9c1f-2e6d8b0a4f13')).toEqual({ section: 'Workspace', label: 'Job 7f3c9a21' })
   })
 
+  it('names a results page by its short id', () => {
+    expect(findPageMeta('/architectures/7f3c9a21-5d4e-4b8a-9c1f-2e6d8b0a4f13/results')).toEqual({ section: 'Workspace', label: 'Results 7f3c9a21' })
+  })
+
   it('leaves the existing architecture pages alone', () => {
     expect(findPageMeta('/architectures/new')).toEqual({ section: 'Workspace', label: 'New Architecture' })
     expect(findPageMeta('/architectures/history')).toEqual({ section: 'Workspace', label: 'Architecture History' })

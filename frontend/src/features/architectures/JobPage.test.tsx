@@ -84,6 +84,13 @@ describe('JobPage', () => {
     expect(screen.getByRole('link', { name: 'Submit a new request' }).getAttribute('href')).toBe('/architectures/new')
   })
 
+  it('links a succeeded job to its results page', async () => {
+    reply = () => json(200, JOBS.succeeded)
+    renderJobPage()
+    const link = await screen.findByRole('link', { name: 'View results' })
+    expect(link.getAttribute('href')).toBe('/architectures/job-1/results')
+  })
+
   it('says when an attempt is taking longer than expected (over 15 minutes)', async () => {
     reply = () => json(200, makeJob({ status: 'running', attempts: 1, created_at: minutesAgo(17), started_at: minutesAgo(16) }))
     renderJobPage()

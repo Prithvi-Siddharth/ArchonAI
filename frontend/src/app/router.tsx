@@ -4,6 +4,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { Spinner } from '@/components/ui'
 import { ArchitectureHistoryPage } from '@/features/architectures/ArchitectureHistoryPage'
 import { JobPage } from '@/features/architectures/JobPage'
+import { ResultsPage } from '@/features/architectures/results/ResultsPage'
 import { NewArchitecturePage } from '@/features/architectures/NewArchitecturePage'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { NotFoundPage } from '@/features/not-found/NotFoundPage'
@@ -42,6 +43,7 @@ export const router = createBrowserRouter([
       { path: 'architectures/history', element: <ArchitectureHistoryPage /> },
       // Static paths above ("new", "history") take precedence over this one.
       { path: 'architectures/:jobId', element: <JobPage /> },
+      { path: 'architectures/:jobId/results', element: <ResultsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       ...devRoutes,
       { path: '*', element: <NotFoundPage /> },
