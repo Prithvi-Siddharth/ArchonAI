@@ -24,6 +24,7 @@ import { ArchitectureTab } from './architecture/ArchitectureTab'
 import { CostTab } from './cost/CostTab'
 import { ReviewTab } from './review/ReviewTab'
 import { OverviewTab } from './OverviewTab'
+import { ReportTab } from './report/ReportTab'
 import { parseResultTab, RESULT_TABS, type ResultTab } from './results-tabs'
 import { ResultsSummary } from './ResultsSummary'
 import { TabPlaceholder } from './TabPlaceholder'
@@ -95,7 +96,7 @@ function ResultsUnavailable({ job }: { job: JobStatusResponse }) {
   )
 }
 
-function ResultsView({ result, tab, onTabChange }: { result: ArchitectureResult; tab: ResultTab; onTabChange: (tab: ResultTab) => void }) {
+function ResultsView({ result, jobId, tab, onTabChange }: { result: ArchitectureResult; jobId: string; tab: ResultTab; onTabChange: (tab: ResultTab) => void }) {
   return (
     <div className="space-y-6">
       <ResultsSummary result={result} onOpenReview={() => onTabChange('review')} />
@@ -115,6 +116,8 @@ function ResultsView({ result, tab, onTabChange }: { result: ArchitectureResult;
           <ReviewTab result={result} />
         ) : tab === 'analyses' ? (
           <AnalysesTab result={result} />
+        ) : tab === 'report' ? (
+          <ReportTab result={result} jobId={jobId} />
         ) : (
           <TabPlaceholder tab={tab} />
         )}
@@ -144,7 +147,7 @@ export function ResultsPage() {
 
   let content
   if (result) {
-    content = <ResultsView result={result} tab={tab} onTabChange={setTab} />
+    content = <ResultsView result={result} jobId={jobId} tab={tab} onTabChange={setTab} />
   } else if (job) {
     content = <ResultsUnavailable job={job} />
   } else if (query.error instanceof ApiError && query.error.status === 404) {

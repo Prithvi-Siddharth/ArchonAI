@@ -192,4 +192,24 @@ describe('ResultsPage with a result', () => {
     expect(blobs[0].type).toBe('application/json')
     click.mockRestore()
   })
+
+  it('Report tab: downloads Markdown named after the job in the URL, with no extra request', async () => {
+    reply = () => json(200, succeeded())
+    const blobs: Blob[] = []
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: (blob: Blob) => (blobs.push(blob), 'blob:test'), revokeObjectURL: () => {} }))
+    const clicked: string[] = []
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.download)
+    })
+    const { user } = renderResults('/architectures/job-1/results?tab=report')
+    expect(await screen.findByRole('heading', { name: 'Final report' })).toBeTruthy() // Stage 4B-6 replaced the placeholder
+    expect(screen.queryByText(/coming soon/)).toBeNull()
+    const requests = vi.mocked(fetch).mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: 'Download Markdown' }))
+    expect(clicked).toEqual(['archonai-report-job-1.md'])
+    expect(blobs).toHaveLength(1)
+    expect(vi.mocked(fetch).mock.calls.length).toBe(requests)
+    click.mockRestore()
+  })
 })
