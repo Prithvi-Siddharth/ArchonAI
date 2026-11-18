@@ -54,6 +54,11 @@ class ArchitectureJob(Base):
         index=True,
     )
     user_request: Mapped[str] = mapped_column(Text, nullable=False)
+    # The account that submitted the job (users.id). NULL for jobs created before
+    # accounts existed: those belong to nobody and no one can open them via the API.
+    # Kept as a plain indexed column (no foreign key) so the in-place migration in
+    # jobs/db.py produces exactly the same schema as a fresh create_all.
+    owner_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     # The serialized ArchitectureResponse (api/schemas.py) once the job succeeds.
     result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)

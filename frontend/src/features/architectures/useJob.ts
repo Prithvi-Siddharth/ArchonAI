@@ -1,9 +1,11 @@
-import { queryOptions, useQuery } from '@tanstack/react-query'
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 
 import { fetchJob } from '@/api/architectures'
 import { ApiError } from '@/api/client'
 import type { JobStatusResponse } from '@/types/api'
 
+import { invalidateJobHistory } from './history/useJobHistory'
 import { isFinalJob } from './job-phase'
 
 /** How often the tracking page re-reads an unfinished job. */
@@ -46,10 +48,17 @@ export function jobRefetchInterval(query: { state: { data?: JobStatusResponse; e
  * refreshes an unfinished job as soon as the tab is visible again.
  */
 export function useJob(jobId: string) {
-  return useQuery({
+  const query = useQuery({
     ...jobQueryOptions(jobId),
     refetchInterval: jobRefetchInterval,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   })
+  // When the job finishes, the history (History page, dashboard) is out of date.
+  const queryClient = useQueryClient()
+  const finishedStatus = isFinalJob(query.data) ? query.data?.status : undefined
+  useEffect(() => {
+    if (finishedStatus) void invalidateJobHistory(queryClient)
+  }, [finishedStatus, queryClient])
+  return query
 }

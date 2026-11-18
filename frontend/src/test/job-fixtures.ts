@@ -114,6 +114,7 @@ export const RETRY_ERROR = { status_code: 429, message: 'LLM provider rate limit
 export function makeJob(overrides: Partial<JobStatusResponse> = {}): JobStatusResponse {
   return {
     job_id: 'job-1',
+    user_request: 'Design a blogging platform for 10,000 users with high availability.',
     status: 'queued',
     attempts: 0,
     created_at: minutesAgo(2),

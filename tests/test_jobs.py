@@ -15,6 +15,7 @@ from groq import RateLimitError
 from kombu.exceptions import OperationalError
 
 from agents import llm as llm_module
+from auth import passwords
 from graph.state import MAX_REVISIONS
 from api.main import app
 from jobs import db, repository
@@ -34,12 +35,25 @@ VALID_BODY = {"user_request": "Design a blogging platform for 10,000 users."}
 _REQUEST = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
 
 
+TEST_JWT_SECRET = "test-secret-" + "x" * 40
+
+
 @pytest.fixture(autouse=True)
 def job_env(monkeypatch):
-    """Fresh in-memory job store and eager Celery for every test."""
+    """Fresh in-memory job store, eager Celery, and a signed-in client for every test.
+
+    Job endpoints require a signed-in user; ownership itself is covered in
+    test_job_ownership.py.
+    """
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
     monkeypatch.setenv("JOB_MAX_RETRIES", "1")
+    monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setattr(passwords, "SCRYPT_N", 2**10)  # fast hashing for tests
+    monkeypatch.setattr(passwords, "SCRYPT_P", 1)
     db.reset_engine()
+    client.cookies.clear()
+    signed_up = client.post("/api/v1/auth/register", json={"email": "jobs@example.com", "password": "test password"})
+    assert signed_up.status_code == 201, signed_up.text
     previous = (celery_app.conf.task_always_eager, celery_app.conf.task_eager_propagates)
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = False

@@ -218,8 +218,19 @@ Interactive docs are available at **http://localhost:8000/docs** once the server
 |--------|------|-------------|
 | `GET` | `/health` | Liveness check. Does not call the LLM. |
 | `GET` | `/api/v1/architectures/examples` | Example prompts (stored in [data/example_prompts.json](data/example_prompts.json)). |
-| `POST` | `/api/v1/architectures/jobs` | Queues a design request and returns a `job_id` immediately (`202`). |
-| `GET` | `/api/v1/architectures/jobs/{job_id}` | Job status, plus the full result once it has succeeded. |
+| `POST` | `/api/v1/auth/register` | Creates an account (`{"email", "password"}`, 8-128 characters) and signs in. |
+| `POST` | `/api/v1/auth/login` | Signs in; sets the session cookie. |
+| `POST` | `/api/v1/auth/logout` | Signs out (deletes the cookie). |
+| `GET` | `/api/v1/auth/me` | The signed-in account. |
+| `POST` | `/api/v1/architectures/jobs` | **Signed in.** Queues a design request as yours and returns a `job_id` immediately (`202`). |
+| `GET` | `/api/v1/architectures/jobs/{job_id}` | **Signed in, owner only.** Job status, plus the full result once it has succeeded. |
+
+**Accounts:** sign-in issues a JWT (8 hours by default) in an HttpOnly, SameSite=Strict cookie
+named `archonai_session`. It needs `JWT_SECRET` (at least 32 random characters) in `.env`;
+without it the auth and job endpoints answer `503`. Each job belongs to the account that
+submitted it: anyone else, signed in or not, gets `404` (or `401` when signed out). Jobs created
+before accounts existed have no owner and can no longer be opened through the API; they are
+kept in the database unchanged.
 
 See [Background Jobs](#background-jobs) below for the full flow and examples.
 
@@ -274,12 +285,17 @@ it has finished.
 ### Example
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/architectures/jobs \
+# Sign in once; -c/-b keep the session cookie in a file.
+curl -c cookies.txt -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "your-password"}' \
+  http://localhost:8000/api/v1/auth/login
+
+curl -b cookies.txt -X POST http://localhost:8000/api/v1/architectures/jobs \
   -H "Content-Type: application/json" \
   -d '{"user_request": "Design a blogging platform for 10,000 users"}'
 # {"job_id":"3f2a…","status":"queued","status_url":"/api/v1/architectures/jobs/3f2a…"}
 
-curl http://localhost:8000/api/v1/architectures/jobs/3f2a…
+curl -b cookies.txt http://localhost:8000/api/v1/architectures/jobs/3f2a…
 # {"job_id":"3f2a…","status":"running","attempts":1,…,"result":null}
 # … later: "status":"succeeded" with the full "result"
 ```
@@ -287,7 +303,8 @@ curl http://localhost:8000/api/v1/architectures/jobs/3f2a…
 | Status | When |
 |--------|------|
 | `202` | Job accepted |
-| `404` | Unknown `job_id` |
+| `401` | Not signed in, or the session has expired |
+| `404` | Unknown `job_id`, or a job that belongs to someone else |
 | `422` | Invalid request body |
 | `503` | MySQL (job store) or Redis (job queue) unavailable |
 

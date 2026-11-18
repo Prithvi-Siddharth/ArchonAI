@@ -4,7 +4,6 @@ import { Link, useParams } from 'react-router'
 import { ApiError } from '@/api/client'
 import { buttonVariants, Card, CardContent, EmptyState, ErrorState, PageHeader, Skeleton } from '@/components/ui'
 import { useNow } from '@/hooks/useNow'
-import { useSubmissionsStore } from '@/stores/submissions.store'
 import { shortId } from '@/utils/format'
 
 import { isFinalJob, jobPhase } from './job-phase'
@@ -44,7 +43,6 @@ export function JobPage() {
   const phase = job ? jobPhase(job) : null
   // Tick every second for the elapsed time while the job is unfinished.
   const now = useNow(job && !isFinalJob(job) ? 1000 : null)
-  const requestPreview = useSubmissionsStore((state) => state.submissions.find((s) => s.jobId === jobId)?.requestPreview)
 
   const notFound = query.error instanceof ApiError && query.error.status === 404
   const errorMessage = query.error instanceof ApiError ? query.error.message : 'The job status could not be loaded.'
@@ -63,7 +61,7 @@ export function JobPage() {
             refreshError={query.isError ? errorMessage : undefined}
           />
         </div>
-        <JobDetails job={job} now={now} requestPreview={requestPreview} />
+        <JobDetails job={job} now={now} />
       </div>
     )
   } else if (notFound) {
@@ -72,7 +70,7 @@ export function JobPage() {
         <EmptyState
           icon={SearchX}
           title="Job not found"
-          description={`No job with ID ${shortId(jobId)} exists on the server. Check the link, or the job may have been removed.`}
+          description={`No job with ID ${shortId(jobId)} was found in your account. Check the link, or sign in with the account that submitted it.`}
           action={
             <Link to="/dashboard" className={buttonVariants({ variant: 'outline' })}>
               Go to dashboard

@@ -16,12 +16,10 @@ function Timestamp({ iso }: { iso: string | null }) {
 interface JobDetailsProps {
   job: JobStatusResponse
   now: number
-  /** The request preview saved in this browser, if this job was submitted here. */
-  requestPreview?: string
 }
 
-/** Facts about the job: id, status, attempts, timestamps and how long it has taken. */
-export function JobDetails({ job, now, requestPreview }: JobDetailsProps) {
+/** Facts about the job: id, status, attempts, timestamps, how long it has taken, and the request. */
+export function JobDetails({ job, now }: JobDetailsProps) {
   const finished = job.finished_at !== null
   const created = new Date(job.created_at).getTime()
   const end = finished ? new Date(job.finished_at as string).getTime() : now
@@ -81,10 +79,10 @@ export function JobDetails({ job, now, requestPreview }: JobDetailsProps) {
               <Timestamp iso={job.finished_at} />
             </dd>
           </div>
-          {requestPreview && (
+          {job.user_request?.trim() && (
             <div>
               <dt className="text-label text-muted-foreground">Request</dt>
-              <dd className="text-muted-foreground">{requestPreview}</dd>
+              <dd className="max-h-60 overflow-y-auto break-words whitespace-pre-line text-muted-foreground">{job.user_request}</dd>
             </div>
           )}
         </dl>

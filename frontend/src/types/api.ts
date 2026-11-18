@@ -225,6 +225,8 @@ export interface ArchitectureResult {
 /** 200 reply of GET /api/v1/architectures/jobs/{job_id} (JobStatusResponse). Times are ISO 8601, UTC. */
 export interface JobStatusResponse {
   job_id: string
+  /** The design request as submitted (trimmed). */
+  user_request: string
   status: JobStatus
   attempts: number
   created_at: string
@@ -233,6 +235,47 @@ export interface JobStatusResponse {
   error: JobError | null
   /** Set once status is "succeeded". */
   result: ArchitectureResult | null
+}
+
+/**
+ * Headline facts from a succeeded job's result (api/schemas.py JobResultSummary). Each is null
+ * when the stored result lacks it; GET /jobs/{id} returns the full result.
+ */
+export interface JobResultSummary {
+  approved: boolean | null
+  critic_score: number | null
+  architecture_version: number | null
+  aws_service_count: number | null
+  estimated_monthly_range: string | null
+  max_revisions_reached: boolean | null
+}
+
+/** One row of GET /jobs (the signed-in user's history). */
+export interface JobHistoryItem {
+  job_id: string
+  user_request: string
+  status: JobStatus
+  attempts: number
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  updated_at: string
+  error: JobError | null
+  /** Set only for succeeded jobs with a stored result. */
+  summary: JobResultSummary | null
+}
+
+export type JobStatusCounts = Record<JobStatus, number>
+
+/** GET /jobs -- a page of the user's jobs, newest first. */
+export interface JobHistoryResponse {
+  items: JobHistoryItem[]
+  /** Jobs matching the search and status filter, across all pages. */
+  total: number
+  limit: number
+  offset: number
+  /** Jobs per status for the same search, ignoring the status filter. */
+  counts: JobStatusCounts
 }
 
 /** One entry of a FastAPI 422 reply's `detail` list (request validation). */

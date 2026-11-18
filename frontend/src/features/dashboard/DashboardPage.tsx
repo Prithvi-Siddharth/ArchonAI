@@ -1,9 +1,8 @@
 import { Activity, CircleCheck, CircleX, Plus } from 'lucide-react'
 import { Link } from 'react-router'
 
-import { Badge, buttonVariants, PageHeader, StatCard } from '@/components/ui'
-import { useSubmissionsStore } from '@/stores/submissions.store'
-import { toast } from '@/stores/toast.store'
+import { ApiError } from '@/api/client'
+import { buttonVariants, PageHeader, StatCard } from '@/components/ui'
 import { formatNumber, formatPercent } from '@/utils/format'
 
 import { NewArchitectureCta } from './NewArchitectureCta'
@@ -11,19 +10,15 @@ import { RecentArchitectures } from './RecentArchitectures'
 import { useDashboardData } from './useDashboardData'
 
 export function DashboardPage() {
-  const { recent, stats, statsLoading, refresh, refreshing } = useDashboardData()
-  const clearSubmissions = useSubmissionsStore((state) => state.clear)
+  const { query, recent, stats } = useDashboardData()
+  const loadError = !query.data && query.isError ? (query.error instanceof ApiError ? query.error.message : 'Your jobs could not be loaded.') : undefined
+  const total = stats?.total ?? 0
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        description="An overview of the architecture jobs submitted from this browser."
-        badge={
-          <Badge title="The backend has no job list yet, so the dashboard shows jobs submitted from this browser.">
-            This browser
-          </Badge>
-        }
+        description="An overview of your architecture jobs."
         actions={
           <Link to="/architectures/new" className={buttonVariants()}>
             <Plus className="size-4" aria-hidden="true" />
@@ -33,27 +28,22 @@ export function DashboardPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Total generations"
-          value={formatNumber(stats.total)}
-          detail="Submitted from this browser"
-          icon={Activity}
-        />
+        <StatCard label="Total generations" value={formatNumber(total)} detail="All jobs in your account" icon={Activity} loading={!stats && !loadError} />
         <StatCard
           label="Successful jobs"
-          value={formatNumber(stats.succeeded)}
-          detail={`${formatPercent(stats.succeeded, stats.total)} of submissions`}
+          value={formatNumber(stats?.succeeded ?? 0)}
+          detail={`${formatPercent(stats?.succeeded ?? 0, total)} of your jobs`}
           icon={CircleCheck}
           tone="success"
-          loading={statsLoading}
+          loading={!stats && !loadError}
         />
         <StatCard
           label="Failed jobs"
-          value={formatNumber(stats.failed)}
-          detail={`${formatPercent(stats.failed, stats.total)} of submissions`}
+          value={formatNumber(stats?.failed ?? 0)}
+          detail={`${formatPercent(stats?.failed ?? 0, total)} of your jobs`}
           icon={CircleX}
           tone="danger"
-          loading={statsLoading}
+          loading={!stats && !loadError}
         />
       </div>
 
@@ -61,13 +51,10 @@ export function DashboardPage() {
         <div className="min-w-0 lg:col-span-2">
           <RecentArchitectures
             items={recent}
-            savedCount={stats.total}
-            onRefresh={refresh}
-            refreshing={refreshing}
-            onClear={() => {
-              clearSubmissions()
-              toast({ title: 'List cleared', description: 'The jobs are still on the server.' })
-            }}
+            loading={query.isPending}
+            error={loadError}
+            onRefresh={() => void query.refetch()}
+            refreshing={query.isFetching}
           />
         </div>
         <NewArchitectureCta />

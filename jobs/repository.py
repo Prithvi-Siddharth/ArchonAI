@@ -19,18 +19,23 @@ Allowed transitions:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Optional
 
-from sqlalchemy import update
+from sqlalchemy import func, or_, select, update
 
 from jobs.db import session_scope
 from jobs.models import ArchitectureJob, JobStatus, utcnow
 
 
-def create_job(user_request: str) -> str:
-    """Store a new queued job and return its id."""
+def create_job(user_request: str, owner_id: Optional[str] = None) -> str:
+    """Store a new queued job and return its id.
+
+    The API always passes the signed-in user's id; `owner_id` is optional only so
+    worker-level code and tests can create jobs directly.
+    """
     with session_scope() as session:
-        job = ArchitectureJob(user_request=user_request)
+        job = ArchitectureJob(user_request=user_request, owner_id=owner_id)
         session.add(job)
         session.flush()  # assigns the default id before the session closes
         return job.id
@@ -40,6 +45,79 @@ def get_job(job_id: str) -> Optional[ArchitectureJob]:
     """Return the job, or None if no job has this id. Allowed in any status."""
     with session_scope() as session:
         return session.get(ArchitectureJob, job_id)
+
+
+def get_owned_job(job_id: str, owner_id: str) -> Optional[ArchitectureJob]:
+    """Return the job only if `owner_id` owns it; None if it doesn't exist OR belongs to
+    someone else (or to nobody), so callers can't tell those cases apart."""
+    with session_scope() as session:
+        return session.execute(
+            select(ArchitectureJob).where(ArchitectureJob.id == job_id, ArchitectureJob.owner_id == owner_id)
+        ).scalar_one_or_none()
+
+
+@dataclass(frozen=True)
+class JobPage:
+    """One page of a user's jobs, newest first, plus counts for the whole (searched) history."""
+
+    jobs: list[ArchitectureJob]
+    total: int
+    counts: dict[JobStatus, int]
+
+
+# "/" rather than backslash as the LIKE escape: it needs no extra quoting on MySQL or SQLite.
+_LIKE_ESCAPE = "/"
+
+
+def _escape_like(text: str) -> str:
+    return text.replace("/", "//").replace("%", "/%").replace("_", "/_")
+
+
+def list_jobs(
+    owner_id: str,
+    *,
+    status: Optional[JobStatus] = None,
+    search: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> JobPage:
+    """A page of `owner_id`'s jobs, newest first. Never returns anyone else's jobs.
+
+    `search` matches the request text anywhere (case-insensitive) or the start of the
+    job id. `counts` covers every status for the same owner and search, so a UI can
+    show how many jobs each status filter would return.
+    """
+    filters = [ArchitectureJob.owner_id == owner_id]
+    if search:
+        pattern = _escape_like(search)
+        filters.append(
+            or_(
+                ArchitectureJob.user_request.ilike(f"%{pattern}%", escape=_LIKE_ESCAPE),
+                ArchitectureJob.id.ilike(f"{pattern}%", escape=_LIKE_ESCAPE),
+            )
+        )
+    with session_scope() as session:
+        counts = {state: 0 for state in JobStatus}
+        for state, count in session.execute(
+            select(ArchitectureJob.status, func.count()).where(*filters).group_by(ArchitectureJob.status)
+        ):
+            counts[JobStatus(state)] = count
+        if status is not None:
+            filters.append(ArchitectureJob.status == status)
+        jobs = (
+            session.execute(
+                select(ArchitectureJob)
+                .where(*filters)
+                # id breaks ties between jobs created in the same second, so pages never overlap.
+                .order_by(ArchitectureJob.created_at.desc(), ArchitectureJob.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+    total = counts[status] if status is not None else sum(counts.values())
+    return JobPage(jobs=list(jobs), total=total, counts=counts)
 
 
 def _transition(job_id: str, allowed_from: tuple[JobStatus, ...], **values: Any) -> bool:

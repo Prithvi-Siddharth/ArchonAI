@@ -52,18 +52,21 @@ describe('navigation to the tracking page', () => {
       <RecentArchitectures
         items={[
           {
-            jobId: 'job-9',
-            request: 'Design a payments API.',
-            status: { state: 'known', status: 'running' },
-            createdAt: new Date().toISOString(),
-            serviceCount: null,
-            criticScore: null,
+            job_id: 'job-9',
+            user_request: 'Design a payments API.',
+            status: 'running',
+            attempts: 1,
+            created_at: new Date().toISOString(),
+            started_at: new Date().toISOString(),
+            finished_at: null,
+            updated_at: new Date().toISOString(),
+            error: null,
+            summary: null,
           },
         ]}
-        savedCount={1}
+        loading={false}
         onRefresh={() => {}}
         refreshing={false}
-        onClear={() => {}}
       />,
     )
 

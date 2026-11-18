@@ -11,10 +11,12 @@ SQLite by changing the environment and calling reset_engine().
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -69,8 +71,61 @@ def init_db() -> None:
     import auth.models  # noqa: F401  (the users table)
     import jobs.models  # noqa: F401
 
-    Base.metadata.create_all(engine)
+    # The API and the worker can both set up the schema on first use. If the other one
+    # is mid-way ("table already exists", "being modified by concurrent DDL"), wait a
+    # moment and run the whole setup again: every part of it is idempotent.
+    for attempt in range(1, _SCHEMA_ATTEMPTS + 1):
+        try:
+            Base.metadata.create_all(engine)
+            _add_missing_columns(engine)
+            break
+        except (OperationalError, ProgrammingError) as exc:
+            # Anything else (e.g. the database is down) fails at once, without waiting.
+            if attempt == _SCHEMA_ATTEMPTS or not _is_concurrent_schema_change(exc):
+                raise
+            time.sleep(0.5 * attempt)
     _tables_created = True
+
+
+_SCHEMA_ATTEMPTS = 5
+# MySQL: table exists, duplicate column, duplicate index, definition being changed by concurrent DDL.
+_CONCURRENT_DDL_ERRORS = {1050, 1060, 1061, 1684}
+
+
+def _is_concurrent_schema_change(exc: Exception) -> bool:
+    """True for errors caused by another process creating the same tables/columns right now."""
+    original = getattr(exc, "orig", None)
+    code = original.args[0] if original is not None and original.args else None
+    return code in _CONCURRENT_DDL_ERRORS or "already exists" in str(original).lower()
+
+
+# Columns added to an existing table after it was first created. create_all only
+# creates missing tables, never missing columns, so each one is added here in place:
+# existing rows are kept, and the new column starts as NULL. There is no Alembic yet.
+_ADDED_COLUMNS = [
+    # (table, column, column DDL, index name)
+    ("architecture_jobs", "owner_id", "VARCHAR(36) NULL", "ix_architecture_jobs_owner_id"),
+]
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Idempotent, and safe when the API and the worker start at the same time."""
+    for table, column, ddl, index in _ADDED_COLUMNS:
+        if column not in {c["name"] for c in inspect(engine).get_columns(table)}:
+            try:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            except (OperationalError, ProgrammingError):
+                # Another process may have added it between our check and the ALTER.
+                if column not in {c["name"] for c in inspect(engine).get_columns(table)}:
+                    raise
+        if index not in {i["name"] for i in inspect(engine).get_indexes(table)}:
+            try:
+                with engine.begin() as connection:
+                    connection.execute(text(f"CREATE INDEX {index} ON {table} ({column})"))
+            except (OperationalError, ProgrammingError):
+                if index not in {i["name"] for i in inspect(engine).get_indexes(table)}:
+                    raise
 
 
 @contextmanager

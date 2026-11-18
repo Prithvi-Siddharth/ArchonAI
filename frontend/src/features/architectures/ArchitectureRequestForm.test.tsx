@@ -3,8 +3,6 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useSubmissionsStore } from '@/stores/submissions.store'
-
 import { ArchitectureRequestForm } from './ArchitectureRequestForm'
 
 const EXAMPLES = [{ label: 'E-commerce platform', prompt: 'Design an e-commerce platform for 500,000 concurrent users.' }]
@@ -34,14 +32,13 @@ function renderForm() {
       <ArchitectureRequestForm onSubmitted={onSubmitted} />
     </QueryClientProvider>,
   )
-  return { onSubmitted, user: userEvent.setup(), textbox: screen.getByLabelText(/describe the system to design/i) }
+  return { client, onSubmitted, user: userEvent.setup(), textbox: screen.getByLabelText(/describe the system to design/i) }
 }
 
 const submitButton = () => screen.getByRole('button', { name: 'Generate architecture' })
 
 afterEach(() => {
   cleanup()
-  useSubmissionsStore.getState().clear()
 })
 
 describe('ArchitectureRequestForm', () => {
@@ -57,10 +54,12 @@ describe('ArchitectureRequestForm', () => {
     expect(posts()).toHaveLength(0)
   })
 
-  it('sends the trimmed request, reports the new job and saves it for the dashboard', async () => {
+  it('sends the trimmed request, reports the new job and refreshes the history', async () => {
     const job = { job_id: 'job-123', status: 'queued', status_url: '/api/v1/architectures/jobs/job-123' }
     const { posts } = stubApi(() => json(202, job))
-    const { user, textbox, onSubmitted } = renderForm()
+    const { user, textbox, onSubmitted, client } = renderForm()
+    const historyKey = ['architectures', 'history', { limit: 6, offset: 0 }]
+    client.setQueryData(historyKey, { items: [], total: 0, limit: 6, offset: 0, counts: { queued: 0, running: 0, succeeded: 0, failed: 0 } })
 
     await user.type(textbox, '   Design a blog for 10,000 readers.   ')
     await user.click(submitButton())
@@ -69,10 +68,8 @@ describe('ArchitectureRequestForm', () => {
     expect(posts()).toHaveLength(1)
     expect(posts()[0][1]?.body).toBe('{"user_request":"Design a blog for 10,000 readers."}')
     expect(onSubmitted.mock.calls[0][0]).toMatchObject({ job, request: 'Design a blog for 10,000 readers.' })
-    expect(useSubmissionsStore.getState().submissions[0]).toMatchObject({
-      jobId: 'job-123',
-      requestPreview: 'Design a blog for 10,000 readers.',
-    })
+    expect(client.getQueryState(historyKey)?.isInvalidated).toBe(true)
+    expect(localStorage.getItem('archonai-submissions')).toBeNull() // nothing is kept in the browser any more
   })
 
   it("shows the API's validation message on the field", async () => {

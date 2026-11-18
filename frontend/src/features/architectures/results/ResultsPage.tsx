@@ -156,7 +156,7 @@ export function ResultsPage() {
         <EmptyState
           icon={SearchX}
           title="Job not found"
-          description={`No job with ID ${shortId(jobId)} exists on the server. Check the link, or the job may have been removed.`}
+          description={`No job with ID ${shortId(jobId)} was found in your account. Check the link, or sign in with the account that submitted it.`}
           action={
             <Link to="/dashboard" className={buttonVariants({ variant: 'outline' })}>
               Go to dashboard

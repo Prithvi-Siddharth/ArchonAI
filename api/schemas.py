@@ -142,10 +142,17 @@ def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
     return value.replace(tzinfo=timezone.utc) if value is not None else None
 
 
+def _job_error(job: ArchitectureJob) -> Optional[JobError]:
+    if job.error_status_code is None:
+        return None
+    return JobError(status_code=job.error_status_code, message=job.error_message or "")
+
+
 class JobStatusResponse(BaseModel):
     """A job's current state, plus its result once it has succeeded."""
 
     job_id: str
+    user_request: str = Field(description="The design request as submitted (trimmed).")
     status: JobStatus
     attempts: int
     created_at: datetime
@@ -158,21 +165,108 @@ class JobStatusResponse(BaseModel):
 
     @classmethod
     def from_job(cls, job: ArchitectureJob) -> JobStatusResponse:
-        error = (
-            JobError(status_code=job.error_status_code, message=job.error_message or "")
-            if job.error_status_code is not None
-            else None
-        )
         return cls(
             job_id=job.id,
+            user_request=job.user_request,
             status=job.status,
             attempts=job.attempts,
             created_at=_as_utc(job.created_at),
             started_at=_as_utc(job.started_at),
             finished_at=_as_utc(job.finished_at),
-            error=error,
+            error=_job_error(job),
             result=ArchitectureResponse.model_validate(job.result) if job.result is not None else None,
         )
+
+
+# --- Job history (GET /api/v1/architectures/jobs) ---
+
+
+def _dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+class JobResultSummary(BaseModel):
+    """A few headline facts from a succeeded job's stored result -- not the result itself.
+
+    Every field is read defensively and is null when the stored result lacks it, so an
+    older or partial result never breaks the list. GET /jobs/{job_id} returns the full result.
+    """
+
+    approved: Optional[bool] = None
+    critic_score: Optional[int] = None
+    architecture_version: Optional[int] = None
+    aws_service_count: Optional[int] = None
+    estimated_monthly_range: Optional[str] = None
+    max_revisions_reached: Optional[bool] = None
+
+    @classmethod
+    def from_result(cls, result: object) -> Optional[JobResultSummary]:
+        if not isinstance(result, dict):
+            return None
+        architecture = _dict(result.get("architecture"))
+        services = architecture.get("services")
+
+        def typed(value: object, kind: type):
+            # bool is a subclass of int; never let True pass as a score or a version.
+            if kind is int and isinstance(value, bool):
+                return None
+            return value if isinstance(value, kind) else None
+
+        return cls(
+            approved=typed(result.get("approved"), bool),
+            critic_score=typed(_dict(result.get("critic_review")).get("score"), int),
+            architecture_version=typed(architecture.get("version"), int),
+            aws_service_count=len(services) if isinstance(services, list) else None,
+            estimated_monthly_range=typed(_dict(result.get("cost_analysis")).get("estimated_monthly_range"), str),
+            max_revisions_reached=typed(result.get("max_revisions_reached"), bool),
+        )
+
+
+class JobHistoryItem(BaseModel):
+    """One row of the history list: the job's metadata plus a small result summary."""
+
+    job_id: str
+    user_request: str
+    status: JobStatus
+    attempts: int
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    updated_at: datetime
+    error: Optional[JobError] = None
+    summary: Optional[JobResultSummary] = Field(default=None, description="Set only for succeeded jobs with a stored result.")
+
+    @classmethod
+    def from_job(cls, job: ArchitectureJob) -> JobHistoryItem:
+        return cls(
+            job_id=job.id,
+            user_request=job.user_request,
+            status=job.status,
+            attempts=job.attempts,
+            created_at=_as_utc(job.created_at),
+            started_at=_as_utc(job.started_at),
+            finished_at=_as_utc(job.finished_at),
+            updated_at=_as_utc(job.updated_at),
+            error=_job_error(job),
+            summary=JobResultSummary.from_result(job.result) if job.status == JobStatus.SUCCEEDED else None,
+        )
+
+
+class JobStatusCounts(BaseModel):
+    queued: int = 0
+    running: int = 0
+    succeeded: int = 0
+    failed: int = 0
+
+
+class JobHistoryResponse(BaseModel):
+    """A page of the signed-in user's jobs, newest first."""
+
+    items: list[JobHistoryItem]
+    total: int = Field(description="Jobs matching the search and status filter (across all pages).")
+    limit: int
+    offset: int
+    counts: JobStatusCounts = Field(description="Jobs per status for the same search, ignoring the status filter.")
 
 
 # --- Accounts (only needed for the /api/v1/auth endpoints) ---
