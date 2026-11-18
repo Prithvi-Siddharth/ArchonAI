@@ -128,6 +128,12 @@ describe('ResultsPage with a result', () => {
     expect(screen.queryByText(/coming soon/)).toBeNull()
     cleanup()
 
+    renderResults('/architectures/job-1/results?tab=trace')
+    expect(await screen.findByRole('heading', { name: 'Execution trace' })).toBeTruthy() // Stage 4B-7 replaced the last placeholder
+    expect(screen.getByRole('tab', { name: 'Trace' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByText(/coming soon/)).toBeNull()
+    cleanup()
+
     renderResults('/architectures/job-1/results?tab=nonsense')
     expect(await screen.findByRole('heading', { name: 'Executive summary' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true')

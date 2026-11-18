@@ -25,9 +25,9 @@ import { CostTab } from './cost/CostTab'
 import { ReviewTab } from './review/ReviewTab'
 import { OverviewTab } from './OverviewTab'
 import { ReportTab } from './report/ReportTab'
+import { TraceTab } from './trace/TraceTab'
 import { parseResultTab, RESULT_TABS, type ResultTab } from './results-tabs'
 import { ResultsSummary } from './ResultsSummary'
-import { TabPlaceholder } from './TabPlaceholder'
 
 const jobPath = (jobId: string) => `/architectures/${encodeURIComponent(jobId)}`
 
@@ -119,7 +119,7 @@ function ResultsView({ result, jobId, tab, onTabChange }: { result: Architecture
         ) : tab === 'report' ? (
           <ReportTab result={result} jobId={jobId} />
         ) : (
-          <TabPlaceholder tab={tab} />
+          <TraceTab result={result} />
         )}
       </Tabs>
     </div>
