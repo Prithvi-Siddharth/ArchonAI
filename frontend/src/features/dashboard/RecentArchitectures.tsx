@@ -1,12 +1,43 @@
-import { ArrowRight, Layers } from 'lucide-react'
+import { ArrowRight, Layers, RotateCw } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router'
 
-import { buttonVariants, Card, CardHeader, DataTable, EmptyState, type Column } from '@/components/ui'
+import {
+  Badge,
+  Button,
+  buttonVariants,
+  Card,
+  CardHeader,
+  ConfirmDialog,
+  DataTable,
+  EmptyState,
+  Skeleton,
+  Tooltip,
+  type Column,
+} from '@/components/ui'
 import { JobStatusBadge } from '@/features/architectures/JobStatusBadge'
-import type { ArchitectureSummary } from '@/types/architecture'
+import type { ArchitectureSummary, JobStatusView } from '@/types/architecture'
 import { formatDateTime, formatRelativeTime, shortId } from '@/utils/format'
 
 const EMPTY = '—'
+
+function StatusCell({ status }: { status: JobStatusView }) {
+  switch (status.state) {
+    case 'loading':
+      return (
+        <>
+          <Skeleton className="h-5 w-20 rounded-full" />
+          <span className="sr-only">Loading status</span>
+        </>
+      )
+    case 'known':
+      return <JobStatusBadge status={status.status} />
+    case 'not-found':
+      return <Badge title="The server has no job with this ID.">Not found</Badge>
+    case 'unavailable':
+      return <Badge title="The status couldn't be loaded. Use Refresh to try again.">Unavailable</Badge>
+  }
+}
 
 const COLUMNS: Column<ArchitectureSummary>[] = [
   {
@@ -25,7 +56,7 @@ const COLUMNS: Column<ArchitectureSummary>[] = [
       </>
     ),
   },
-  { key: 'status', header: 'Status', cell: (item) => <JobStatusBadge status={item.status} /> },
+  { key: 'status', header: 'Status', cell: (item) => <StatusCell status={item.status} /> },
   {
     key: 'services',
     header: 'Services',
@@ -56,21 +87,53 @@ const COLUMNS: Column<ArchitectureSummary>[] = [
   },
 ]
 
-export function RecentArchitectures({ items }: { items: ArchitectureSummary[] }) {
+interface RecentArchitecturesProps {
+  items: ArchitectureSummary[]
+  /** Total saved submissions (the table shows only the most recent). */
+  savedCount: number
+  onRefresh: () => void
+  refreshing: boolean
+  onClear: () => void
+}
+
+export function RecentArchitectures({ items, savedCount, onRefresh, refreshing, onClear }: RecentArchitecturesProps) {
+  const [confirmingClear, setConfirmingClear] = useState(false)
+  const hasItems = items.length > 0
+
   return (
     <Card>
       <CardHeader
         title="Recent architectures"
-        description="The latest architecture generation jobs."
+        description="Jobs submitted from this browser, newest first."
         action={
-          <Link to="/architectures/history" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
-            View all
-            <ArrowRight className="size-3.5" aria-hidden="true" />
-          </Link>
+          <div className="flex items-center gap-1">
+            {hasItems && (
+              <>
+                <Tooltip content="Refresh statuses" describeTrigger={false}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={onRefresh}
+                    disabled={refreshing}
+                    aria-label="Refresh statuses"
+                  >
+                    <RotateCw className={refreshing ? 'size-3.5 animate-spin' : 'size-3.5'} aria-hidden="true" />
+                  </Button>
+                </Tooltip>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmingClear(true)}>
+                  Clear
+                </Button>
+              </>
+            )}
+            <Link to="/architectures/history" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+              View all
+              <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Link>
+          </div>
         }
       />
       <DataTable
-        caption="Recent architecture generation jobs"
+        caption="Architecture jobs submitted from this browser"
         columns={COLUMNS}
         rows={items}
         getRowKey={(item) => item.jobId}
@@ -79,9 +142,22 @@ export function RecentArchitectures({ items }: { items: ArchitectureSummary[] })
             compact
             icon={Layers}
             title="No architectures yet"
-            description="Architectures you generate will be listed here."
+            description="Architectures you submit from this browser will be listed here."
           />
         }
+      />
+
+      <ConfirmDialog
+        open={confirmingClear}
+        title="Clear this browser's list?"
+        description={`Removes ${savedCount === 1 ? 'the saved job' : `all ${savedCount} saved jobs`} from this browser's dashboard. The jobs themselves stay on the server.`}
+        confirmLabel="Clear list"
+        tone="destructive"
+        onCancel={() => setConfirmingClear(false)}
+        onConfirm={() => {
+          onClear()
+          setConfirmingClear(false)
+        }}
       />
     </Card>
   )
