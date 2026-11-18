@@ -66,6 +66,7 @@ def init_db() -> None:
         return
     # Imported here so every model is registered on Base before create_all,
     # without making this module depend on the models at import time.
+    import auth.models  # noqa: F401  (the users table)
     import jobs.models  # noqa: F401
 
     Base.metadata.create_all(engine)

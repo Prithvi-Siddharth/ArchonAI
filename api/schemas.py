@@ -8,11 +8,13 @@ actually produces.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from auth.models import User
 from graph.state import MAX_REVISIONS, ArchonState
 from jobs.models import ArchitectureJob, JobStatus
 from models.schemas import (
@@ -171,3 +173,55 @@ class JobStatusResponse(BaseModel):
             error=error,
             result=ArchitectureResponse.model_validate(job.result) if job.result is not None else None,
         )
+
+
+# --- Accounts (only needed for the /api/v1/auth endpoints) ---
+
+# A deliberately simple shape check (something@something.tld, no spaces); deliverability
+# is not verified. 254 is the longest address SMTP allows.
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _normalise_email(value: str) -> str:
+    email = value.strip().lower()
+    if len(email) > 254 or not _EMAIL_PATTERN.fullmatch(email):
+        raise ValueError("Enter a valid email address.")
+    return email
+
+
+class RegisterRequest(BaseModel):
+    """A new account. The email is stored trimmed and lowercase."""
+
+    email: str = Field(examples=["you@example.com"])
+    # Not trimmed: spaces are allowed and count. 128 caps the hashing work per request.
+    password: str = Field(min_length=8, max_length=128, description="8 to 128 characters.")
+
+    @field_validator("email")
+    @classmethod
+    def _check_email(cls, value: str) -> str:
+        return _normalise_email(value)
+
+
+class LoginRequest(BaseModel):
+    """Credentials for an existing account."""
+
+    email: str = Field(examples=["you@example.com"])
+    # No minimum here, so a policy change never locks out an existing account.
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def _check_email(cls, value: str) -> str:
+        return _normalise_email(value)
+
+
+class UserResponse(BaseModel):
+    """The signed-in account. Never includes the password hash."""
+
+    id: str
+    email: str
+    created_at: datetime
+
+    @classmethod
+    def from_user(cls, user: User) -> UserResponse:
+        return cls(id=user.id, email=user.email, created_at=_as_utc(user.created_at))

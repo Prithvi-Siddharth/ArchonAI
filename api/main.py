@@ -14,7 +14,7 @@ import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from api.routes import architectures
+from api.routes import architectures, auth
 from api.schemas import HealthResponse
 from graph.cloudwatch_logs import configure_cloudwatch_logging
 
@@ -40,6 +40,7 @@ app = FastAPI(
 )
 
 app.include_router(architectures.router)
+app.include_router(auth.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
