@@ -248,3 +248,19 @@ export interface ValidationErrorItem {
 export interface ApiErrorBody {
   detail: string | ValidationErrorItem[]
 }
+
+// --- Accounts (backend: api/routes/auth.py, api/schemas.py) ---
+
+/** Body of POST /auth/register and POST /auth/login. The backend trims and lowercases the email. */
+export interface Credentials {
+  email: string
+  password: string
+}
+
+/** The signed-in account (UserResponse). Never includes the password hash. */
+export interface User {
+  id: string
+  email: string
+  /** ISO 8601, UTC. */
+  created_at: string
+}

@@ -7,7 +7,7 @@ import { cn } from '@/utils/cn'
 
 import { NAV_SECTIONS } from './navigation'
 
-function Brand({ collapsed = false }: { collapsed?: boolean }) {
+export function Brand({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-2.5">
       <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-foreground text-background">

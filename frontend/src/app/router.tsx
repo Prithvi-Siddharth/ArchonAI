@@ -6,6 +6,9 @@ import { ArchitectureHistoryPage } from '@/features/architectures/ArchitectureHi
 import { JobPage } from '@/features/architectures/JobPage'
 import { ResultsPage } from '@/features/architectures/results/ResultsPage'
 import { NewArchitecturePage } from '@/features/architectures/NewArchitecturePage'
+import { LoginPage } from '@/features/auth/LoginPage'
+import { RegisterPage } from '@/features/auth/RegisterPage'
+import { RequireAuth } from '@/features/auth/RequireAuth'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { NotFoundPage } from '@/features/not-found/NotFoundPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
@@ -33,9 +36,17 @@ const devRoutes: RouteObject[] = import.meta.env.DEV
   : []
 
 export const router = createBrowserRouter([
+  // Public: the only pages a signed-out visitor can see.
+  { path: '/login', element: <LoginPage /> },
+  { path: '/register', element: <RegisterPage /> },
   {
     path: '/',
-    element: <AppLayout />,
+    // Everything else needs a signed-in user.
+    element: (
+      <RequireAuth>
+        <AppLayout />
+      </RequireAuth>
+    ),
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },

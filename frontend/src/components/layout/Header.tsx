@@ -2,6 +2,7 @@ import { Menu } from 'lucide-react'
 import { useLocation } from 'react-router'
 
 import { Button } from '@/components/ui'
+import { AccountMenu } from '@/features/auth/AccountMenu'
 import { useUIStore } from '@/stores/ui.store'
 
 import { findPageMeta } from './navigation'
@@ -35,6 +36,7 @@ export function Header() {
       </nav>
 
       <ThemeToggle />
+      <AccountMenu />
     </header>
   )
 }

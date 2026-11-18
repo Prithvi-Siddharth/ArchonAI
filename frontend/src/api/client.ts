@@ -127,6 +127,8 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) throw errorFromReply(response.status, data)
+  // 204 No Content (e.g. POST /auth/logout): success with no body by design.
+  if (response.status === 204) return undefined as T
   // A success without JSON (e.g. index.html from a static host) means the API isn't behind this address.
   if (data === undefined) throw new ApiError('unreachable', UNREACHABLE_MESSAGE, { status: response.status })
   return data as T
