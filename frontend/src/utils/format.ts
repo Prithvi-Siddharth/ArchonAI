@@ -1,6 +1,7 @@
 const numberFormat = new Intl.NumberFormat('en')
 const relativeFormat = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const dateTimeFormat = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
+const timeFormat = new Intl.DateTimeFormat('en', { timeStyle: 'short' })
 
 const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ['year', 365 * 24 * 3600],
@@ -39,4 +40,20 @@ export function formatDateTime(iso: string): string {
 /** The first 8 characters of a job UUID, as shown in the UI. */
 export function shortId(id: string): string {
   return id.slice(0, 8)
+}
+
+/** "4:59 PM" */
+export function formatTime(iso: string): string {
+  return timeFormat.format(new Date(iso))
+}
+
+/** A length of time: "45s", "9m 05s", "1h 02m". Negative values (clock skew) count as 0. */
+export function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`
+  return `${seconds}s`
 }

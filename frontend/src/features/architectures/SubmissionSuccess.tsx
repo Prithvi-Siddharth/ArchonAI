@@ -1,22 +1,13 @@
-import { CircleCheck, Copy, Plus } from 'lucide-react'
+import { ArrowRight, CircleCheck, Copy, Plus } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router'
 
 import { Button, buttonVariants, Card, CardContent, CardFooter, Tooltip } from '@/components/ui'
-import { toast } from '@/stores/toast.store'
 import { formatDateTime } from '@/utils/format'
 
 import type { SubmittedJob } from './ArchitectureRequestForm'
+import { copyJobId } from './copyJobId'
 import { JobStatusBadge } from './JobStatusBadge'
-
-async function copyJobId(jobId: string) {
-  try {
-    await navigator.clipboard.writeText(jobId)
-    toast({ tone: 'success', title: 'Job ID copied' })
-  } catch {
-    toast({ tone: 'danger', title: "Couldn't copy the job ID", description: 'Select it and copy it manually.' })
-  }
-}
 
 /** Shown after the API accepts a job (HTTP 202): its id, status and when it was submitted. */
 export function SubmissionSuccess({ submitted, onNewRequest }: { submitted: SubmittedJob; onNewRequest: () => void }) {
@@ -71,13 +62,17 @@ export function SubmissionSuccess({ submitted, onNewRequest }: { submitted: Subm
         </dl>
       </CardContent>
       <CardFooter>
-        <Link to="/dashboard" className={buttonVariants({ variant: 'outline' })}>
+        <Link to="/dashboard" className={buttonVariants({ variant: 'ghost' })}>
           Go to dashboard
         </Link>
-        <Button onClick={onNewRequest}>
+        <Button variant="outline" onClick={onNewRequest}>
           <Plus className="size-4" aria-hidden="true" />
           Submit another
         </Button>
+        <Link to={`/architectures/${encodeURIComponent(job.job_id)}`} className={buttonVariants()}>
+          Track progress
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </Link>
       </CardFooter>
     </Card>
   )

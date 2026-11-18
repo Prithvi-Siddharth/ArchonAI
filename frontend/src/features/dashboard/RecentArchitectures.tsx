@@ -47,7 +47,12 @@ const COLUMNS: Column<ArchitectureSummary>[] = [
     cell: (item) => (
       <>
         <p className="truncate font-medium" title={item.request}>
-          {item.request}
+          <Link
+            to={`/architectures/${encodeURIComponent(item.jobId)}`}
+            className="rounded-sm underline-offset-2 hover:underline"
+          >
+            {item.request}
+          </Link>
         </p>
         <p className="mt-0.5 text-meta text-muted-foreground">
           <span className="font-mono">{shortId(item.jobId)}</span>

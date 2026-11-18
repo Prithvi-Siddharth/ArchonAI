@@ -38,6 +38,9 @@ export function findPageMeta(pathname: string): { section: string; label: string
     const item = section.items.find(({ to }) => matches(pathname, to))
     if (item) return { section: section.title, label: item.label }
   }
+  // A job's tracking page: /architectures/{jobId}.
+  const jobPage = /^\/architectures\/([^/]+)\/?$/.exec(pathname)
+  if (jobPage) return { section: 'Workspace', label: `Job ${decodeURIComponent(jobPage[1]).slice(0, 8)}` }
   if (import.meta.env.DEV) {
     const page = DEV_PAGES.find(({ to }) => matches(pathname, to))
     if (page) return { section: page.section, label: page.label }

@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Spinner } from '@/components/ui'
 import { ArchitectureHistoryPage } from '@/features/architectures/ArchitectureHistoryPage'
+import { JobPage } from '@/features/architectures/JobPage'
 import { NewArchitecturePage } from '@/features/architectures/NewArchitecturePage'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { NotFoundPage } from '@/features/not-found/NotFoundPage'
@@ -39,6 +40,8 @@ export const router = createBrowserRouter([
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'architectures/new', element: <NewArchitecturePage /> },
       { path: 'architectures/history', element: <ArchitectureHistoryPage /> },
+      // Static paths above ("new", "history") take precedence over this one.
+      { path: 'architectures/:jobId', element: <JobPage /> },
       { path: 'settings', element: <SettingsPage /> },
       ...devRoutes,
       { path: '*', element: <NotFoundPage /> },

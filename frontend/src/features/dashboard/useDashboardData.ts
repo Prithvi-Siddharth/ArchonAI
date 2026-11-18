@@ -1,17 +1,14 @@
 import { useQueries, type UseQueryResult } from '@tanstack/react-query'
 
-import { fetchJob } from '@/api/architectures'
 import { ApiError } from '@/api/client'
+import { isFinalJob as isFinal } from '@/features/architectures/job-phase'
+import { jobQueryOptions } from '@/features/architectures/useJob'
 import { useSubmissionsStore } from '@/stores/submissions.store'
-import type { ArchitectureSummary, JobStats, JobStatus, JobStatusView } from '@/types/architecture'
+import type { ArchitectureSummary, JobStats, JobStatusView } from '@/types/architecture'
 import type { JobStatusResponse } from '@/types/api'
 
 /** The dashboard's table shows this many of the (at most 20) saved submissions. */
 const RECENT_ROWS = 6
-
-/** Finished jobs never change again: the backend refuses status changes after succeeded/failed. */
-const FINAL_STATUSES = new Set<JobStatus>(['succeeded', 'failed'])
-const isFinal = (job: JobStatusResponse | undefined) => job !== undefined && FINAL_STATUSES.has(job.status)
 
 function statusView(query: UseQueryResult<JobStatusResponse>): JobStatusView {
   if (query.data) return { state: 'known', status: query.data.status }
@@ -29,11 +26,8 @@ export function useDashboardData() {
   const submissions = useSubmissionsStore((state) => state.submissions)
 
   const queries = useQueries({
-    queries: submissions.map((submission) => ({
-      queryKey: ['architectures', 'job', submission.jobId],
-      queryFn: ({ signal }: { signal: AbortSignal }) => fetchJob(submission.jobId, signal),
-      staleTime: (query: { state: { data?: JobStatusResponse } }) => (isFinal(query.state.data) ? Infinity : 0),
-    })),
+    // Shared with the tracking page; the dashboard reads each once and does not poll.
+    queries: submissions.map((submission) => jobQueryOptions(submission.jobId)),
   })
 
   const rows: ArchitectureSummary[] = submissions.map((submission, index) => {
