@@ -118,7 +118,7 @@ describe('ResultsPage with a result', () => {
   it('opens the tab named in ?tab= and falls back to Overview for unknown values', async () => {
     reply = () => json(200, succeeded())
     renderResults('/architectures/job-1/results?tab=cost')
-    expect(await screen.findByText('Cost: coming soon')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Relative cost breakdown' })).toBeTruthy() // Stage 4B-3 replaced the placeholder
     expect(screen.getByRole('tab', { name: 'Cost' }).getAttribute('aria-selected')).toBe('true')
     cleanup()
 

@@ -20,6 +20,7 @@ import { shortId } from '@/utils/format'
 
 import { useJob } from '../useJob'
 import { ArchitectureTab } from './architecture/ArchitectureTab'
+import { CostTab } from './cost/CostTab'
 import { OverviewTab } from './OverviewTab'
 import { parseResultTab, RESULT_TABS, type ResultTab } from './results-tabs'
 import { ResultsSummary } from './ResultsSummary'
@@ -106,6 +107,8 @@ function ResultsView({ result, tab, onTabChange }: { result: ArchitectureResult;
           <OverviewTab result={result} />
         ) : tab === 'architecture' ? (
           <ArchitectureTab result={result} />
+        ) : tab === 'cost' ? (
+          <CostTab result={result} />
         ) : (
           <TabPlaceholder tab={tab} />
         )}
