@@ -382,3 +382,87 @@ export interface Stats {
   sample_size: number
   sample_capped: boolean
 }
+
+// --- Job monitoring (backend: api/routes/monitoring.py, read from CloudWatch Logs; read-only) ---
+
+/** Headline numbers from one job's log events; null until the matching event was logged. */
+export interface MonitoringSummary {
+  attempts: number
+  job_duration_ms: number | null
+  workflow_duration_ms: number | null
+  revisions: number | null
+  approved: boolean | null
+  llm_calls: number
+  llm_failures: number
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  retries: number
+  rate_limited_responses: number
+}
+
+export interface MonitoringAgent {
+  node: string
+  /** Display name, e.g. "Compute Agent". */
+  label: string
+  runs: number
+  total_ms: number
+  failures: number
+  last_outcome: string | null
+  /** This agent's share of all agent time (0 to 1). */
+  share: number
+}
+
+export interface MonitoringLLMCall {
+  /** ISO 8601, UTC. */
+  time: string
+  node: string | null
+  label: string | null
+  call_type: string | null
+  provider: string | null
+  model: string | null
+  outcome: string | null
+  total_ms: number | null
+  input_tokens: number | null
+  output_tokens: number | null
+  reasoning_tokens: number | null
+  retries: number
+  rate_limited_responses: number
+  finish_reason: string | null
+  provider_status: number | null
+  error_type: string | null
+}
+
+export interface MonitoringEvent {
+  time: string
+  service: string
+  /** DEBUG, INFO, WARNING, ERROR or CRITICAL. */
+  level: string
+  event: string
+  /** Only allow-listed fields: numbers, true/false and short identifier-like words. */
+  fields: Record<string, number | boolean | string>
+}
+
+/** Whether the logs could be read: "ok", "empty" (none found for this job), or why not. */
+export type MonitoringState = 'ok' | 'empty' | 'disabled' | 'no_credentials' | 'forbidden' | 'throttled' | 'unreachable'
+
+/** GET /architectures/jobs/{id}/monitoring */
+export interface JobMonitoring {
+  job_id: string
+  job_status: JobStatus
+  attempts: number
+  created_at: string
+  finished_at: string | null
+  state: MonitoringState
+  /** A safe explanation when state is not "ok". */
+  message: string | null
+  /** True while more lines may still arrive (the job is unfinished, or finished moments ago). */
+  may_still_arrive: boolean
+  summary: MonitoringSummary | null
+  agents: MonitoringAgent[]
+  llm_calls: MonitoringLLMCall[]
+  timeline: MonitoringEvent[]
+  /** The tables were cut short; the summary figures still count every event. */
+  truncated: boolean
+  fetched_at: string
+}

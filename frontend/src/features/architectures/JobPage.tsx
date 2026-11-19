@@ -101,9 +101,16 @@ export function JobPage() {
         description="Live status of one architecture generation job."
         badge={job ? <JobStatusBadge status={job.status} /> : undefined}
         actions={
-          <Link to="/dashboard" className={buttonVariants({ variant: 'outline' })}>
-            Dashboard
-          </Link>
+          <>
+            {jobId && (
+              <Link to={`/monitoring/${encodeURIComponent(jobId)}`} className={buttonVariants({ variant: 'outline' })}>
+                Monitoring
+              </Link>
+            )}
+            <Link to="/dashboard" className={buttonVariants({ variant: 'outline' })}>
+              Dashboard
+            </Link>
+          </>
         }
       />
       {content}

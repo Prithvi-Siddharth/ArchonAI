@@ -191,7 +191,7 @@ describe('Activity page', () => {
 describe('Activity in the sidebar', () => {
   it('is a Workspace link after Architecture History with its own breadcrumb', () => {
     const workspace = NAV_SECTIONS.find((section) => section.title === 'Workspace')
-    expect(workspace?.items.map((i) => i.label)).toEqual(['Dashboard', 'New Architecture', 'Architecture History', 'Activity'])
+    expect(workspace?.items.map((i) => i.label)).toEqual(['Dashboard', 'New Architecture', 'Architecture History', 'Activity', 'Monitoring'])
     expect(findPageMeta('/activity')).toEqual({ section: 'Workspace', label: 'Activity' })
   })
 

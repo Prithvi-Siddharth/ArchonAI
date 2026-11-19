@@ -464,3 +464,86 @@ class StatsResponse(BaseModel):
     # The averages come from this many succeeded jobs (the newest); capped when there are more.
     sample_size: int
     sample_capped: bool
+
+
+# --- Job monitoring (api/routes/monitoring.py, jobs/monitoring.py) ---
+
+
+class MonitoringSummary(BaseModel):
+    """Headline numbers worked out from the job's own log events. Null until the matching event is logged."""
+
+    attempts: int
+    job_duration_ms: Optional[int] = None
+    workflow_duration_ms: Optional[int] = None
+    revisions: Optional[int] = None
+    approved: Optional[bool] = None
+    llm_calls: int
+    llm_failures: int
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    retries: int
+    rate_limited_responses: int
+
+
+class MonitoringAgent(BaseModel):
+    node: str
+    label: str
+    runs: int
+    total_ms: int
+    failures: int
+    last_outcome: Optional[str] = None
+    # This agent's share of all agent time (0 to 1).
+    share: float
+
+
+class MonitoringLLMCall(BaseModel):
+    time: datetime
+    node: Optional[str] = None
+    label: Optional[str] = None
+    call_type: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    outcome: Optional[str] = None
+    total_ms: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+    retries: int = 0
+    rate_limited_responses: int = 0
+    finish_reason: Optional[str] = None
+    provider_status: Optional[int] = None
+    error_type: Optional[str] = None
+
+
+class MonitoringEvent(BaseModel):
+    time: datetime
+    service: str
+    level: str
+    event: str
+    # Only allow-listed fields: numbers, true/false, and short identifier-like words.
+    fields: dict[str, int | bool | str]
+
+
+class MonitoringResponse(BaseModel):
+    """One job's monitoring data, read from CloudWatch Logs. Read-only.
+
+    `state` says whether data could be read: "ok", "empty" (CloudWatch answered but has no lines
+    for this job), or why not: "disabled", "no_credentials", "forbidden", "throttled", "unreachable".
+    """
+
+    job_id: str
+    job_status: JobStatus
+    attempts: int
+    created_at: datetime
+    finished_at: Optional[datetime] = None
+    state: str
+    message: Optional[str] = None
+    # True while more lines may still arrive (the job is unfinished, or finished moments ago).
+    may_still_arrive: bool
+    summary: Optional[MonitoringSummary] = None
+    agents: list[MonitoringAgent] = []
+    llm_calls: list[MonitoringLLMCall] = []
+    timeline: list[MonitoringEvent] = []
+    truncated: bool = False
+    fetched_at: datetime

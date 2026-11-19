@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, CircleAlert, Copy, FileText, RotateCw } from 'lucide-react'
+import { ArrowRight, ChevronDown, CircleAlert, Copy, FileText, Gauge, RotateCw } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
 import { Link } from 'react-router'
 
@@ -150,6 +150,10 @@ export function HistoryEntry({ item, expanded, onToggle }: { item: JobHistoryIte
             <Link to={jobPath(item.job_id)} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
               View Job
               <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Link>
+            <Link to={`/monitoring/${encodeURIComponent(item.job_id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+              <Gauge className="size-3.5" aria-hidden="true" />
+              Monitoring
             </Link>
             {hasResults && (
               <Link to={`${jobPath(item.job_id)}/results`} className={buttonVariants({ size: 'sm' })}>

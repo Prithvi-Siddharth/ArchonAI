@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadArchonAIJobLogsOnly",
+      "Effect": "Allow",
+      "Action": "logs:FilterLogEvents",
+      "Resource": [
+        "arn:aws:logs:ap-south-1:*:log-group:/archonai/api:*",
+        "arn:aws:logs:ap-south-1:*:log-group:/archonai/worker:*"
+      ]
+    }
+  ]
+}

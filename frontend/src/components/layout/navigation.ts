@@ -1,4 +1,4 @@
-import { Activity, History, Info, KeyRound, LayoutDashboard, Settings, SquarePlus, UserRound, type LucideIcon } from 'lucide-react'
+import { Activity, Gauge, History, Info, KeyRound, LayoutDashboard, Settings, SquarePlus, UserRound, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   label: string
@@ -22,6 +22,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: 'New Architecture', to: '/architectures/new', icon: SquarePlus },
       { label: 'Architecture History', to: '/architectures/history', icon: History },
       { label: 'Activity', to: '/activity', icon: Activity, showActiveJobs: true },
+      { label: 'Monitoring', to: '/monitoring', icon: Gauge },
     ],
   },
   {

@@ -577,6 +577,26 @@ them without those dimensions returns nothing.
 $0.30 per extra metric per month, and only while data is being published. The dashboard (3 free)
 and the 2 alarms (10 free) are within the free tier.
 
+### Per-job monitoring page (optional, read-only)
+
+The **Monitoring** page shows one job's agent timings, LLM calls (tokens, retries, rate limits) and
+log events, read back from CloudWatch Logs by `GET /api/v1/architectures/jobs/{job_id}/monitoring`.
+CloudWatch *metrics* deliberately carry no job ids (that would be billed per job), so the page's
+per-job numbers are worked out from that job's own log lines (`/archonai/worker` and `/archonai/api`).
+
+- **Read-only and private.** Only `FilterLogEvents` is ever called; nothing in CloudWatch is created or
+  changed. Only the job's owner can read it (anyone else gets the usual `404`).
+- **Allow-listed.** Only known events and fields are returned, each parsed as a number, true/false or
+  a short identifier-like word. Free text from a log line never reaches the browser.
+- **Needs permission to read logs.** Attach `monitoring/iam/archonai-logs-read-policy.json` to the AWS
+  identity the API container uses (the same profile or role that ships the logs). Without it the page
+  says so instead of failing. It also needs `CLOUDWATCH_ENABLED=true`.
+- **States, not errors.** CloudWatch off, no credentials, no permission, throttled, unreachable and
+  "no lines found" each get a clear message. Reads are cached for 8 seconds while a job is live and 5
+  minutes once it is over; failed reads are never cached.
+- Logs reach CloudWatch a few seconds late, so a running job's page refreshes every 10 seconds. Jobs from
+  before logging was switched on, or older than the log group's retention, have no lines.
+
 ## Project Structure
 
 ```
