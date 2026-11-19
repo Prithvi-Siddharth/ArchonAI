@@ -4,6 +4,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { ActivityPage } from '@/features/activity/ActivityPage'
 import { Spinner } from '@/components/ui'
 import { AboutPage } from '@/features/about/AboutPage'
+import { CreatorPage } from '@/features/creator/CreatorPage'
 import { ByokPage } from '@/features/byok/ByokPage'
 import { ArchitectureHistoryPage } from '@/features/architectures/ArchitectureHistoryPage'
 import { JobPage } from '@/features/architectures/JobPage'
@@ -62,6 +63,7 @@ export const router = createBrowserRouter([
       { path: 'architectures/:jobId/results', element: <ResultsPage /> },
       { path: 'activity', element: <ActivityPage /> },
       { path: 'about', element: <AboutPage /> },
+      { path: 'creator', element: <CreatorPage /> },
       { path: 'byok', element: <ByokPage /> },
       { path: 'settings', element: <SettingsPage /> },
       ...devRoutes,

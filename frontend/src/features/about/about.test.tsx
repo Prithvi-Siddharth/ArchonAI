@@ -138,7 +138,10 @@ describe('About in the sidebar', () => {
   it('has its own Help section, after System', () => {
     expect(NAV_SECTIONS.map((section) => section.title)).toEqual(['Workspace', 'System', 'Help'])
     const help = NAV_SECTIONS.find((section) => section.title === 'Help')
-    expect(help?.items.map((i) => [i.label, i.to])).toEqual([['About', '/about']])
+    expect(help?.items.map((i) => [i.label, i.to])).toEqual([
+      ['About', '/about'],
+      ['Creator', '/creator'],
+    ])
     const system = NAV_SECTIONS.find((section) => section.title === 'System')
     expect(system?.items.map((i) => i.label)).toEqual(['Bring Your Own Key', 'Settings'])
     expect(findPageMeta('/about')).toEqual({ section: 'Help', label: 'About' })

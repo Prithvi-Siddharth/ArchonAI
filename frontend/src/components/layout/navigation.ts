@@ -1,4 +1,4 @@
-import { Activity, History, Info, KeyRound, LayoutDashboard, Settings, SquarePlus, type LucideIcon } from 'lucide-react'
+import { Activity, History, Info, KeyRound, LayoutDashboard, Settings, SquarePlus, UserRound, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   label: string
@@ -33,7 +33,10 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: 'Help',
-    items: [{ label: 'About', to: '/about', icon: Info }],
+    items: [
+      { label: 'About', to: '/about', icon: Info },
+      { label: 'Creator', to: '/creator', icon: UserRound },
+    ],
   },
 ]
 
