@@ -16,7 +16,9 @@ import random
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Optional, TypeVar
 
 import httpx
@@ -902,6 +904,28 @@ def is_temporary_server_error(exc: BaseException) -> bool:
     return _int_or_none(getattr(exc, "code", None)) in TEMPORARY_SERVER_STATUS_CODES
 
 
+_INVALID_KEY_REASON = "API_KEY_INVALID"
+
+
+def is_credential_rejection(exc: BaseException) -> bool:
+    """The provider refused the API key itself (401/403, or Gemini's invalid-key answer).
+
+    Decided from status codes and Google's fixed error-reason code only, never
+    from the message text. Used to tell a user their key is wrong instead of
+    reporting a generic provider error.
+    """
+    if _int_or_none(_provider_error_fields(exc)["provider_status"]) in (401, 403):
+        return True
+    # Gemini answers an invalid key with 400 INVALID_ARGUMENT plus a machine-readable reason.
+    for source in (exc, exc.__cause__):
+        details = getattr(source, "details", None)
+        error = details.get("error") if isinstance(details, dict) else None
+        entries = error.get("details") if isinstance(error, dict) else None
+        if isinstance(entries, list) and any(isinstance(e, dict) and e.get("reason") == _INVALID_KEY_REASON for e in entries):
+            return True
+    return False
+
+
 def _sleep_before_retry(exc: BaseException, attempt: int, delay_seconds: float) -> None:
     _log_llm_failure(exc, True, call_attempt=attempt + 1, retry_in_ms=int(round(delay_seconds * 1000)))
     started = now()
@@ -913,16 +937,22 @@ def _sleep_before_retry(exc: BaseException, attempt: int, delay_seconds: float) 
             stats.note_app_retry(now() - started)  # measured, not the planned delay
 
 
-def _build_groq_llm(temperature: float, max_tokens: int) -> BaseChatModel:
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-    if not api_key or api_key == "your_groq_api_key_here":
-        raise MissingAPIKeyError(
-            "GROQ_API_KEY is not set. Copy .env.example to .env and set a real "
-            "Groq API key from https://console.groq.com/keys."
-        )
+def _build_groq_llm(
+    temperature: float, max_tokens: int, *, api_key: Optional[str] = None, model: Optional[str] = None
+) -> BaseChatModel:
+    # `api_key` is a user's own key (see LLMCredentials); without it the server's .env key is used.
+    own_key = api_key is not None
+    if not own_key:
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        if not api_key or api_key == "your_groq_api_key_here":
+            raise MissingAPIKeyError(
+                "GROQ_API_KEY is not set. Copy .env.example to .env and set a real "
+                "Groq API key from https://console.groq.com/keys."
+            )
     from langchain_groq import ChatGroq
 
-    model = os.getenv("GROQ_MODEL", "").strip() or DEFAULT_GROQ_MODEL
+    # The server's GROQ_MODEL belongs to the server's key; a user's own key gets their model or the default.
+    model = model or ("" if own_key else os.getenv("GROQ_MODEL", "").strip()) or DEFAULT_GROQ_MODEL
     return ChatGroq(
         model=model,
         api_key=api_key,
@@ -937,16 +967,20 @@ def _build_groq_llm(temperature: float, max_tokens: int) -> BaseChatModel:
     )
 
 
-def _build_gemini_llm(temperature: float, max_tokens: int) -> BaseChatModel:
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise MissingAPIKeyError(
-            "GEMINI_API_KEY is not set. Create a key at https://aistudio.google.com/apikey "
-            "and add it to .env, or set LLM_PROVIDER=groq."
-        )
+def _build_gemini_llm(
+    temperature: float, max_tokens: int, *, api_key: Optional[str] = None, model: Optional[str] = None
+) -> BaseChatModel:
+    own_key = api_key is not None
+    if not own_key:
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise MissingAPIKeyError(
+                "GEMINI_API_KEY is not set. Create a key at https://aistudio.google.com/apikey "
+                "and add it to .env, or set LLM_PROVIDER=groq."
+            )
     from langchain_google_genai import ChatGoogleGenerativeAI
 
-    model = os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
+    model = model or ("" if own_key else os.getenv("GEMINI_MODEL", "").strip()) or DEFAULT_GEMINI_MODEL
     # Gemini 3 models think before answering by default, and the thinking
     # tokens count toward max_tokens -- at our small caps, deep thinking can
     # use up the whole budget and cut the JSON answer off. "default" leaves
@@ -969,10 +1003,44 @@ def _build_gemini_llm(temperature: float, max_tokens: int) -> BaseChatModel:
     )
 
 
+@dataclass(frozen=True)
+class LLMCredentials:
+    """A user's own provider, API key and (optional) model, for one job run.
+
+    The key is excluded from repr() so a stray log line or traceback can't print it.
+    """
+
+    provider: str
+    api_key: str = field(repr=False)
+    model: Optional[str] = None
+
+
+# The credentials for the run in progress. A ContextVar (like the job id in
+# graph/observability.py) so they follow the run into LangGraph's parallel
+# nodes without any agent having to pass them along, and never leak into
+# another job running in the same process.
+_credentials: ContextVar[Optional[LLMCredentials]] = ContextVar("archonai_llm_credentials", default=None)
+
+
+@contextmanager
+def use_llm_credentials(credentials: Optional[LLMCredentials]) -> Iterator[None]:
+    """Make get_llm() use these credentials inside the block; None keeps the server's own setup."""
+    if credentials is None:
+        yield
+        return
+    token = _credentials.set(credentials)
+    try:
+        yield
+    finally:
+        _credentials.reset(token)
+
+
 def get_llm(temperature: float = 0.2, max_tokens: int = DEFAULT_MAX_TOKENS) -> BaseChatModel:
     """Return the configured chat model.
 
-    Controlled by the LLM_PROVIDER environment variable: "groq" (the
+    A job run with a user's own credentials (use_llm_credentials) gets that
+    user's provider and key. Otherwise it is controlled by the LLM_PROVIDER
+    environment variable: "groq" (the
     default) or "gemini". Adding Amazon Bedrock support later only requires
     a new branch here.
     `max_tokens` bounds completion length -- most agents use the default, but
@@ -980,6 +1048,14 @@ def get_llm(temperature: float = 0.2, max_tokens: int = DEFAULT_MAX_TOKENS) -> B
     service list and data flow naturally need more tokens than, say, a single
     analysis (see DEFAULT_MAX_TOKENS for why this is capped at all).
     """
+    credentials = _credentials.get()
+    if credentials is not None:
+        if credentials.provider == "groq":
+            return _build_groq_llm(temperature, max_tokens, api_key=credentials.api_key, model=credentials.model)
+        if credentials.provider == "gemini":
+            return _build_gemini_llm(temperature, max_tokens, api_key=credentials.api_key, model=credentials.model)
+        raise ValueError(f"Unknown provider '{credentials.provider}'. Supported providers: groq, gemini.")
+
     provider = os.getenv("LLM_PROVIDER", "groq").strip().lower()
     if provider == "groq":
         return _build_groq_llm(temperature, max_tokens)

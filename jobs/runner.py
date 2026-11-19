@@ -17,12 +17,14 @@ import logging
 from typing import Optional
 
 from api.errors import WorkflowFailure, classify_workflow_error
+from agents.llm import use_llm_credentials
 from api.schemas import ArchitectureResponse
 from graph.observability import elapsed_ms, job_context, log_event, now
 from graph.workflow import run_workflow
 from jobs import repository
 from jobs.config import get_settings
 from jobs.models import JobStatus
+from llm_keys.service import credentials_for
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +89,10 @@ def execute_job(job_id: str, *, allow_retry: bool = False, redelivered: bool = F
         start = now()
 
         try:
-            final_state = run_workflow(job.user_request)
+            # The owner's own provider key, if they saved one; read here in the worker
+            # (never carried by the queue or the job row) and used for this run only.
+            with use_llm_credentials(credentials_for(job.owner_id)):
+                final_state = run_workflow(job.user_request)
             result = ArchitectureResponse.from_state(final_state).model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - every failure must end in a stored job status
             failure = classify_workflow_error(exc)

@@ -232,6 +232,17 @@ submitted it: anyone else, signed in or not, gets `404` (or `401` when signed ou
 before accounts existed have no owner and can no longer be opened through the API; they are
 kept in the database unchanged.
 
+**Bring your own key:** a signed-in user can use their own LLM provider (Groq or Google Gemini)
+from the Bring Your Own Key page, through `GET`, `PUT` and `DELETE` `/api/v1/settings/llm`. The key is
+encrypted (Fernet, keyed from `KEY_ENCRYPTION_SECRET`, at least 32 random characters in `.env`)
+before it is stored, and is never returned: only its last four characters are. It is not put in
+the job, the queue or the logs; the worker reads the job owner's key when the job starts and
+uses it for that run only. A user with no saved key uses the server's `GROQ_API_KEY` /
+`LLM_PROVIDER` as before. Without `KEY_ENCRYPTION_SECRET`, saving a key answers `503`. If a saved
+key can't be decrypted (the secret was changed), that user's jobs fail with a clear message
+instead of falling back to the server's key. Validation errors (`422`) no longer echo the
+submitted value back.
+
 See [Background Jobs](#background-jobs) below for the full flow and examples.
 
 **Request body:** `{"user_request": "<10-4000 characters>"}`. Surrounding whitespace is

@@ -319,3 +319,76 @@ class UserResponse(BaseModel):
     @classmethod
     def from_user(cls, user: User) -> UserResponse:
         return cls(id=user.id, email=user.email, created_at=_as_utc(user.created_at))
+
+
+# --- Bring your own key (llm_keys/, api/routes/llm_settings.py) ---
+
+_API_KEY_MIN = 8
+_API_KEY_MAX = 512
+_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/\-]{0,99}$")
+
+
+class LLMProviderOption(BaseModel):
+    """A provider the user can bring a key for."""
+
+    id: str
+    label: str
+    default_model: str
+    key_url: str
+
+
+class LLMSettingsResponse(BaseModel):
+    """The signed-in user's LLM settings. Never includes the key, only its last four characters."""
+
+    configured: bool
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    key_hint: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    # False when the server has no KEY_ENCRYPTION_SECRET: keys can't be saved until it is set.
+    encryption_available: bool
+    providers: list[LLMProviderOption]
+
+
+class LLMSettingsUpdate(BaseModel):
+    """Save a provider, key and optional model. Omit `api_key` to change only the model of the saved key."""
+
+    provider: str
+    api_key: Optional[str] = Field(default=None, repr=False, description="The provider API key. Stored encrypted; never returned.")
+    model: Optional[str] = Field(default=None, description="Optional model name; empty means the provider's default.")
+
+    @field_validator("provider")
+    @classmethod
+    def _check_provider(cls, value: str) -> str:
+        from llm_keys.providers import PROVIDERS
+
+        value = value.strip().lower()
+        if value not in PROVIDERS:
+            raise ValueError("Choose one of the supported providers.")
+        return value
+
+    @field_validator("api_key")
+    @classmethod
+    def _check_api_key(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) < _API_KEY_MIN or len(value) > _API_KEY_MAX:
+            raise ValueError(f"The API key must be {_API_KEY_MIN} to {_API_KEY_MAX} characters.")
+        if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in value):
+            raise ValueError("The API key can't contain spaces or line breaks.")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _check_model(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if not _MODEL_PATTERN.match(value):
+            raise ValueError("The model name can only use letters, digits and . _ : / - (up to 100 characters).")
+        return value

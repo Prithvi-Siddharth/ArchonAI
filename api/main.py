@@ -12,9 +12,12 @@ from __future__ import annotations
 import logging
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
-from api.routes import architectures, auth
+from api.routes import architectures, auth, llm_settings
 from api.schemas import HealthResponse
 from graph.cloudwatch_logs import configure_cloudwatch_logging
 
@@ -41,6 +44,15 @@ app = FastAPI(
 
 app.include_router(architectures.router)
 app.include_router(auth.router)
+app.include_router(llm_settings.router)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's usual 422, minus each error's `input`: it would echo the submitted value
+    back, which for passwords and API keys is a secret that should not travel twice."""
+    errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

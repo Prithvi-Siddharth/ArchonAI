@@ -307,3 +307,34 @@ export interface User {
   /** ISO 8601, UTC. */
   created_at: string
 }
+
+// --- Bring your own key (backend: api/routes/llm_settings.py, api/schemas.py) ---
+
+/** A provider the user can bring a key for. */
+export interface LLMProviderOption {
+  id: string
+  label: string
+  /** Used when the user leaves the model empty. */
+  default_model: string
+  /** Where the user creates a key. */
+  key_url: string
+}
+
+/** GET/PUT /settings/llm. The key itself is never returned, only its last four characters. */
+export interface LLMSettings {
+  configured: boolean
+  provider: string | null
+  model: string | null
+  key_hint: string | null
+  updated_at: string | null
+  /** False when the server can't encrypt keys yet, so none can be saved. */
+  encryption_available: boolean
+  providers: LLMProviderOption[]
+}
+
+/** Body of PUT /settings/llm. Leave `api_key` out to change only the model of the saved key. */
+export interface LLMSettingsUpdate {
+  provider: string
+  api_key?: string
+  model?: string | null
+}

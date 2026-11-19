@@ -69,6 +69,7 @@ def init_db() -> None:
     # Imported here so every model is registered on Base before create_all,
     # without making this module depend on the models at import time.
     import auth.models  # noqa: F401  (the users table)
+    import llm_keys.models  # noqa: F401  (the user_llm_settings table)
     import jobs.models  # noqa: F401
 
     # The API and the worker can both set up the schema on first use. If the other one

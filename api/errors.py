@@ -15,7 +15,15 @@ import httpx
 from groq import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 from langchain_core.exceptions import ModelConnectionError, ModelError, ModelRateLimitError, ModelTimeoutError
 
-from agents.llm import LLMInvocationError, MissingAPIKeyError, is_temporary_server_error
+from agents.llm import LLMInvocationError, MissingAPIKeyError, is_credential_rejection, is_temporary_server_error
+from llm_keys.service import StoredKeyUnusableError
+
+
+KEY_UNUSABLE_MESSAGE = "Your saved API key could not be used. Please save it again on the Bring Your Own Key page."
+KEY_REJECTED_MESSAGE = (
+    "The LLM provider rejected the API key. If you added your own key, "
+    "check it on the Bring Your Own Key page: it must be correct, still active, and allowed to use the chosen model."
+)
 
 
 @dataclass(frozen=True)
@@ -62,8 +70,15 @@ def classify_workflow_error(exc: BaseException) -> WorkflowFailure:
     # retryable: the same request would most likely run just as long again.
     if has(SoftTimeLimitExceeded):
         return WorkflowFailure(status.HTTP_504_GATEWAY_TIMEOUT, "Job timed out.", False)
+    # The user's saved key can't be decrypted (the encryption secret changed, or the row is damaged).
+    if has(StoredKeyUnusableError):
+        return WorkflowFailure(status.HTTP_400_BAD_REQUEST, KEY_UNUSABLE_MESSAGE, False)
     if has(MissingAPIKeyError):
         return WorkflowFailure(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM provider is not configured.", False)
+    # The provider refused the key. Not retryable: the same key fails again. The message
+    # covers both a user's own key (Settings) and the server's, without saying which.
+    if any(is_credential_rejection(link) for link in chain):
+        return WorkflowFailure(status.HTTP_502_BAD_GATEWAY, KEY_REJECTED_MESSAGE, False)
     # Groq raises its SDK's errors; Gemini raises LangChain's provider-neutral
     # Model*Error types (or raw httpx errors for network failures).
     if has(RateLimitError, ModelRateLimitError) or any(isinstance(link, APIStatusError) and link.status_code == 413 for link in chain):

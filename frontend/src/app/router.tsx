@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ActivityPage } from '@/features/activity/ActivityPage'
 import { Spinner } from '@/components/ui'
+import { ByokPage } from '@/features/byok/ByokPage'
 import { ArchitectureHistoryPage } from '@/features/architectures/ArchitectureHistoryPage'
 import { JobPage } from '@/features/architectures/JobPage'
 import { ResultsPage } from '@/features/architectures/results/ResultsPage'
@@ -59,6 +60,7 @@ export const router = createBrowserRouter([
       { path: 'architectures/:jobId', element: <JobPage /> },
       { path: 'architectures/:jobId/results', element: <ResultsPage /> },
       { path: 'activity', element: <ActivityPage /> },
+      { path: 'byok', element: <ByokPage /> },
       { path: 'settings', element: <SettingsPage /> },
       ...devRoutes,
       { path: '*', element: <NotFoundPage /> },
