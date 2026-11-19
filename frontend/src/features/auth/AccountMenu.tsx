@@ -22,7 +22,7 @@ export function AccountMenu() {
   return (
     <div className="flex min-w-0 items-center gap-1">
       <span className="hidden max-w-56 truncate text-meta text-muted-foreground md:block" title={me.data.email} data-testid="account-email">
-        {me.data.email}
+        {me.data.display_name ?? me.data.email}
       </span>
       <Tooltip content="Sign out" side="bottom" describeTrigger={false}>
         <Button variant="ghost" size="icon" onClick={handleSignOut} loading={signOut.isPending} aria-label="Sign out">

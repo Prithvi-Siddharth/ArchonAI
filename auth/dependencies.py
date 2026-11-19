@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from auth import repository
 from auth.config import COOKIE_NAME, AuthSettings, get_auth_settings
 from auth.models import User
-from auth.tokens import read_access_token
+from auth.tokens import read_session
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +48,18 @@ def get_current_user(
     token: Optional[str] = Depends(session_cookie),
     settings: AuthSettings = Depends(configured_auth_settings),
 ) -> User:
-    """The signed-in user, or 401. A valid token for a deleted account is also 401."""
-    user_id = read_access_token(token, settings) if token else None
-    if user_id is None:
+    """The signed-in user, or 401. A token for a deleted account, or from before the
+    last password change (an older token version), is also 401."""
+    session = read_session(token, settings) if token else None
+    if session is None:
         raise NOT_AUTHENTICATED
+    user_id, token_version = session
     try:
         user = repository.get_user(user_id)
     except SQLAlchemyError as exc:
         # Class name only: SQLAlchemy messages can include statement parameters.
         logger.error("Account lookup failed (%s).", type(exc).__name__)
         raise ACCOUNT_STORE_UNAVAILABLE from None
-    if user is None:
+    if user is None or user.token_version != token_version:
         raise NOT_AUTHENTICATED
     return user

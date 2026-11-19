@@ -232,6 +232,16 @@ submitted it: anyone else, signed in or not, gets `404` (or `401` when signed ou
 before accounts existed have no owner and can no longer be opened through the API; they are
 kept in the database unchanged.
 
+**Account settings:** `PATCH /api/v1/auth/me` sets or clears an optional display name (the email
+can't be changed). `POST /api/v1/auth/password` changes the password; it needs the current one
+(a wrong one answers `400`, not `401`) and ends every other session by adding 1 to the account's
+`token_version`, which every session token carries, while the browser that made the change gets a
+fresh cookie. Tokens issued before this existed have no version and are refused, so everyone signs
+in once after upgrading. `GET /api/v1/stats` returns the signed-in user's own job statistics:
+counts, success rate, average time and critic score, approval rate, average AWS services, recent
+activity and a 14-day (UTC) series; the averages use the newest 500 succeeded jobs. The two new
+`users` columns are added in place on first start, keeping existing accounts.
+
 **Bring your own key:** a signed-in user can use their own LLM provider (Groq or Google Gemini)
 from the Bring Your Own Key page, through `GET`, `PUT` and `DELETE` `/api/v1/settings/llm`. The key is
 encrypted (Fernet, keyed from `KEY_ENCRYPTION_SECRET`, at least 32 random characters in `.env`)

@@ -57,7 +57,7 @@ def _set_cookie_header(response) -> str:
 
 def _token(user_id: str, **overrides) -> str:
     now = datetime.now(timezone.utc)
-    claims = {"sub": user_id, "iat": now, "exp": now + timedelta(hours=1), "iss": JWT_ISSUER, **overrides}
+    claims = {"sub": user_id, "tv": 0, "iat": now, "exp": now + timedelta(hours=1), "iss": JWT_ISSUER, **overrides}
     return jwt.encode(claims, TEST_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -69,7 +69,7 @@ def test_register_creates_account_signs_in_and_sets_a_safe_cookie(client):
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["email"] == "ada@example.com"  # trimmed + lowercased
-    assert set(body) == {"id", "email", "created_at"}  # never the hash
+    assert set(body) == {"id", "email", "display_name", "created_at"}  # never the hash
     cookie = _set_cookie_header(response).lower()
     assert cookie.startswith(f"{COOKIE_NAME}=")
     for part in ("httponly", "samesite=strict", "path=/api", "max-age=28800"):
@@ -206,6 +206,9 @@ def test_a_valid_token_is_accepted(client):
         pytest.param(lambda uid: _token(uid)[:-4] + "AAAA", id="tampered-signature"),
         pytest.param(lambda uid: jwt.encode({"iat": 1, "exp": 9999999999, "iss": JWT_ISSUER}, TEST_SECRET, algorithm="HS256"), id="no-subject"),
         pytest.param(lambda uid: _token("00000000-0000-0000-0000-000000000000"), id="unknown-user"),
+        pytest.param(lambda uid: jwt.encode({"sub": uid, "iat": 1, "exp": 9999999999, "iss": JWT_ISSUER}, TEST_SECRET, algorithm="HS256"), id="no-token-version"),
+        pytest.param(lambda uid: _token(uid, tv="0"), id="token-version-not-a-number"),
+        pytest.param(lambda uid: _token(uid, tv=1), id="token-version-from-the-future"),
         pytest.param(lambda uid: "not.a.jwt", id="garbage"),
     ],
 )

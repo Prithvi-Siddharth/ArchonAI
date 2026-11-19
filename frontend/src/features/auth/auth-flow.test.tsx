@@ -21,7 +21,7 @@ import { RegisterPage } from './RegisterPage'
 import { RequireAuth } from './RequireAuth'
 import { ME_QUERY_KEY } from './useAuth'
 
-const ADA: User = { id: 'u-1', email: 'ada@example.com', created_at: '2026-11-18T10:00:00Z' }
+const ADA: User = { id: 'u-1', email: 'ada@example.com', display_name: null, created_at: '2026-11-18T10:00:00Z' }
 const PASSWORD = 'correct horse'
 
 type Reply = { status: number; body?: unknown } | 'network-error' | 'pending'

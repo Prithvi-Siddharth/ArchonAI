@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jobs.db import Base
@@ -26,3 +27,7 @@ class User(Base):
     # scrypt hash from auth/passwords.py -- never the password itself.
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    # Optional name shown instead of the email; the email stays the sign-in.
+    display_name: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    # Carried in every session token. A password change adds 1, so every older token stops working.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

@@ -104,8 +104,12 @@ def _is_concurrent_schema_change(exc: Exception) -> bool:
 # creates missing tables, never missing columns, so each one is added here in place:
 # existing rows are kept, and the new column starts as NULL. There is no Alembic yet.
 _ADDED_COLUMNS = [
-    # (table, column, column DDL, index name)
+    # (table, column, column DDL, index name or None)
     ("architecture_jobs", "owner_id", "VARCHAR(36) NULL", "ix_architecture_jobs_owner_id"),
+    # Account settings: an optional display name, and a counter that a password change bumps
+    # to end every other session (existing accounts start at 0).
+    ("users", "display_name", "VARCHAR(60) NULL", None),
+    ("users", "token_version", "INT NOT NULL DEFAULT 0", None),
 ]
 
 
@@ -120,7 +124,7 @@ def _add_missing_columns(engine: Engine) -> None:
                 # Another process may have added it between our check and the ALTER.
                 if column not in {c["name"] for c in inspect(engine).get_columns(table)}:
                     raise
-        if index not in {i["name"] for i in inspect(engine).get_indexes(table)}:
+        if index and index not in {i["name"] for i in inspect(engine).get_indexes(table)}:
             try:
                 with engine.begin() as connection:
                     connection.execute(text(f"CREATE INDEX {index} ON {table} ({column})"))

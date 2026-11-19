@@ -302,6 +302,8 @@ export interface Credentials {
 
 /** The signed-in account (UserResponse). Never includes the password hash. */
 export interface User {
+  /** The optional name shown instead of the email; null when not set. */
+  display_name: string | null
   id: string
   email: string
   /** ISO 8601, UTC. */
@@ -337,4 +339,46 @@ export interface LLMSettingsUpdate {
   provider: string
   api_key?: string
   model?: string | null
+}
+
+// --- Account settings (backend: api/routes/auth.py, api/routes/stats.py) ---
+
+/** Body of POST /auth/password. */
+export interface PasswordChange {
+  current_password: string
+  new_password: string
+}
+
+export interface StatsJobs {
+  total: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+}
+
+/** Jobs submitted on one UTC calendar day ("YYYY-MM-DD"). */
+export interface StatsDay {
+  date: string
+  jobs: number
+}
+
+/** GET /stats. Rates are fractions (0 to 1); every average is null until there is data. */
+export interface Stats {
+  jobs: StatsJobs
+  success_rate: number | null
+  /** Submit to finish, for succeeded jobs. */
+  average_total_seconds: number | null
+  average_critic_score: number | null
+  approval_rate: number | null
+  average_aws_services: number | null
+  jobs_last_7_days: number
+  jobs_last_30_days: number
+  first_job_at: string | null
+  last_job_at: string | null
+  /** The last 14 UTC days, oldest first, zeros included. */
+  daily: StatsDay[]
+  /** The averages come from this many of the newest succeeded jobs. */
+  sample_size: number
+  sample_capped: boolean
 }

@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 
-from api.schemas import ErrorResponse, LoginRequest, RegisterRequest, UserResponse
+from api.schemas import ChangePasswordRequest, ErrorResponse, LoginRequest, ProfileUpdate, RegisterRequest, UserResponse
 from auth import repository
 from auth.config import COOKIE_NAME, COOKIE_PATH, AuthSettings, get_auth_settings
 from auth.dependencies import ACCOUNT_STORE_UNAVAILABLE, configured_auth_settings, get_current_user
@@ -43,7 +43,7 @@ def _store_unavailable(exc: SQLAlchemyError) -> HTTPException:
 def _set_session_cookie(response: Response, user: User, settings: AuthSettings) -> None:
     response.set_cookie(
         COOKIE_NAME,
-        create_access_token(user.id, settings),
+        create_access_token(user.id, settings, token_version=user.token_version),
         max_age=settings.expire_minutes * 60,
         path=COOKIE_PATH,
         httponly=True,
@@ -103,3 +103,50 @@ def logout(response: Response) -> None:
 def me(user: User = Depends(get_current_user)) -> UserResponse:
     """The signed-in account."""
     return UserResponse.from_user(user)
+
+
+@router.patch("/me", response_model=UserResponse, responses=_COMMON_ERRORS)
+def update_profile(body: ProfileUpdate, user: User = Depends(get_current_user)) -> UserResponse:
+    """Set or clear the display name. The email can't be changed here."""
+    try:
+        updated = repository.set_display_name(user.id, body.display_name)
+    except SQLAlchemyError as exc:
+        raise _store_unavailable(exc) from None
+    if updated is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in, or the session has expired.")
+    return UserResponse.from_user(updated)
+
+
+@router.post(
+    "/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={**_COMMON_ERRORS, status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse}},
+)
+def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    settings: AuthSettings = Depends(configured_auth_settings),
+) -> Response:
+    """Change the password. Needs the current one. Every other session is signed out; this one stays.
+
+    A wrong current password is a 400, not a 401: the user is signed in, and the browser
+    treats any 401 as an expired session.
+    """
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The current password is incorrect.")
+    if body.new_password == body.current_password:
+        raise HTTPException(
+            422,
+            [{"type": "value_error", "loc": ["body", "new_password"], "msg": "Choose a password different from your current one."}],
+        )
+    try:
+        updated = repository.change_password(user.id, hash_password(body.new_password))
+    except SQLAlchemyError as exc:
+        raise _store_unavailable(exc) from None
+    if updated is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in, or the session has expired.")
+    # Never the passwords: only who.
+    logger.info("Password changed (user %s); other sessions signed out.", user.id)
+    reply = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _set_session_cookie(reply, updated, settings)  # this browser gets a token for the new version
+    return reply

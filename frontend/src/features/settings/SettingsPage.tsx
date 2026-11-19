@@ -1,20 +1,23 @@
-import { Construction } from 'lucide-react'
+import { PageHeader } from '@/components/ui'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
-import { Card } from '@/components/ui/Card'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { PageHeader } from '@/components/ui/PageHeader'
+import { AccountCard } from './AccountCard'
+import { PasswordCard } from './PasswordCard'
+import { StatsCard } from './StatsCard'
 
+/** Your account, your password, and statistics about your own jobs. */
 export function SettingsPage() {
+  useDocumentTitle('Settings')
   return (
     <div className="space-y-6">
-      <PageHeader title="Settings" description="Preferences for this workspace." />
-      <Card>
-        <EmptyState
-          icon={Construction}
-          title="Not available yet"
-          description="Settings arrive in a later phase. The theme can already be switched from the header."
-        />
-      </Card>
+      <PageHeader title="Settings" description="Your account, your password, and your usage. The theme can be switched from the header." />
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <div className="space-y-6">
+          <AccountCard />
+          <PasswordCard />
+        </div>
+        <StatsCard />
+      </div>
     </div>
   )
 }

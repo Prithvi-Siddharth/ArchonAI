@@ -96,7 +96,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   /** Sent as JSON. */
   body?: unknown
   /** Cancels the request (e.g. TanStack Query's signal); rejects with the original AbortError. */

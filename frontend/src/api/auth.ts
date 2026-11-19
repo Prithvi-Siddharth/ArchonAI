@@ -1,5 +1,5 @@
 /** Account endpoints (backend: api/routes/auth.py). The session JWT lives in an HttpOnly cookie the browser sends itself. */
-import type { Credentials, User } from '@/types/api'
+import type { Credentials, PasswordChange, User } from '@/types/api'
 
 import { ApiError, apiRequest } from './client'
 
@@ -28,4 +28,17 @@ export function register(credentials: Credentials): Promise<User> {
 /** POST /logout -- deletes the session cookie (204). */
 export function logout(): Promise<void> {
   return apiRequest<void>(`${AUTH_PATH}/logout`, { method: 'POST' })
+}
+
+/** PATCH /me -- set the display name; an empty one (null) clears it. */
+export function updateProfile(displayName: string | null): Promise<User> {
+  return apiRequest<User>(`${AUTH_PATH}/me`, { method: 'PATCH', body: { display_name: displayName } })
+}
+
+/**
+ * POST /password -- change the password (204). 400 when the current password is wrong (not 401, which
+ * would sign the user out). Every other browser is signed out; this one gets a fresh cookie.
+ */
+export function changePassword(change: PasswordChange): Promise<void> {
+  return apiRequest<void>(`${AUTH_PATH}/password`, { method: 'POST', body: change })
 }

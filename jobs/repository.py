@@ -20,6 +20,7 @@ Allowed transitions:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import func, or_, select, update
@@ -190,4 +191,72 @@ def mark_requeued(job_id: str, status_code: int, message: str) -> bool:
         status=JobStatus.QUEUED,
         error_status_code=status_code,
         error_message=message,
+    )
+
+
+# --- Statistics for one owner (GET /api/v1/stats) -------------------------------------
+
+# The averages come from at most this many of the owner's newest succeeded jobs, so
+# one account with a huge history can't make the request slow.
+STATS_SAMPLE_LIMIT = 500
+STATS_DAYS = 14
+
+
+@dataclass(frozen=True)
+class OwnerStats:
+    counts: dict[JobStatus, int]
+    first_job_at: Optional[datetime]
+    last_job_at: Optional[datetime]
+    last_7_days: int
+    last_30_days: int
+    # Jobs submitted per UTC day for the last STATS_DAYS days, oldest first (zeros included).
+    daily: list[tuple[date, int]]
+    # (created_at, finished_at, result) of the newest succeeded jobs, newest first.
+    sample: list[tuple[datetime, Optional[datetime], Any]]
+    sample_capped: bool
+
+
+def owner_stats(owner_id: str, now: Optional[datetime] = None) -> OwnerStats:
+    """Raw numbers about one owner's jobs. Only that owner's rows are ever read."""
+    now = now or utcnow()
+    mine = ArchitectureJob.owner_id == owner_id
+    today = now.date()
+    first_day = today - timedelta(days=STATS_DAYS - 1)
+    with session_scope() as session:
+        counts = {status: 0 for status in JobStatus}
+        for status, count in session.execute(
+            select(ArchitectureJob.status, func.count()).where(mine).group_by(ArchitectureJob.status)
+        ):
+            counts[status] = count
+        first_at, last_at = session.execute(
+            select(func.min(ArchitectureJob.created_at), func.max(ArchitectureJob.created_at)).where(mine)
+        ).one()
+        since = lambda days: select(func.count()).where(mine, ArchitectureJob.created_at >= now - timedelta(days=days))  # noqa: E731
+        last_7 = session.execute(since(7)).scalar_one()
+        last_30 = session.execute(since(30)).scalar_one()
+
+        per_day = {first_day + timedelta(days=i): 0 for i in range(STATS_DAYS)}
+        window_start = datetime.combine(first_day, datetime.min.time())
+        for (created_at,) in session.execute(select(ArchitectureJob.created_at).where(mine, ArchitectureJob.created_at >= window_start)):
+            if created_at.date() in per_day:
+                per_day[created_at.date()] += 1
+
+        sample = [
+            (row.created_at, row.finished_at, row.result)
+            for row in session.execute(
+                select(ArchitectureJob.created_at, ArchitectureJob.finished_at, ArchitectureJob.result)
+                .where(mine, ArchitectureJob.status == JobStatus.SUCCEEDED)
+                .order_by(ArchitectureJob.created_at.desc())
+                .limit(STATS_SAMPLE_LIMIT)
+            )
+        ]
+    return OwnerStats(
+        counts=counts,
+        first_job_at=first_at,
+        last_job_at=last_at,
+        last_7_days=last_7,
+        last_30_days=last_30,
+        daily=sorted(per_day.items()),
+        sample=sample,
+        sample_capped=counts[JobStatus.SUCCEEDED] > STATS_SAMPLE_LIMIT,
     )

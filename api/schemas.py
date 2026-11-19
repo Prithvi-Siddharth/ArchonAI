@@ -314,11 +314,13 @@ class UserResponse(BaseModel):
 
     id: str
     email: str
+    # The optional name shown instead of the email; null when not set.
+    display_name: Optional[str] = None
     created_at: datetime
 
     @classmethod
     def from_user(cls, user: User) -> UserResponse:
-        return cls(id=user.id, email=user.email, created_at=_as_utc(user.created_at))
+        return cls(id=user.id, email=user.email, display_name=user.display_name, created_at=_as_utc(user.created_at))
 
 
 # --- Bring your own key (llm_keys/, api/routes/llm_settings.py) ---
@@ -392,3 +394,73 @@ class LLMSettingsUpdate(BaseModel):
         if not _MODEL_PATTERN.match(value):
             raise ValueError("The model name can only use letters, digits and . _ : / - (up to 100 characters).")
         return value
+
+
+# --- Account settings: profile, password, statistics (api/routes/auth.py, api/routes/stats.py) ---
+
+_DISPLAY_NAME_MIN = 2
+_DISPLAY_NAME_MAX = 60
+
+
+class ProfileUpdate(BaseModel):
+    """Set the display name; empty or null clears it. Other fields (such as the email) are ignored."""
+
+    display_name: Optional[str] = None
+
+    @field_validator("display_name")
+    @classmethod
+    def _check_display_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = " ".join(value.split())  # trims, and collapses runs of whitespace
+        if not value:
+            return None
+        if len(value) < _DISPLAY_NAME_MIN or len(value) > _DISPLAY_NAME_MAX:
+            raise ValueError(f"The display name must be {_DISPLAY_NAME_MIN} to {_DISPLAY_NAME_MAX} characters.")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+            raise ValueError("The display name can't contain control characters.")
+        return value
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    # Same rule as registration. Not trimmed: spaces count.
+    new_password: str = Field(min_length=8, max_length=128, description="8 to 128 characters.")
+
+
+class StatsJobs(BaseModel):
+    total: int
+    queued: int
+    running: int
+    succeeded: int
+    failed: int
+
+
+class StatsDay(BaseModel):
+    """Jobs submitted on one UTC calendar day."""
+
+    date: str
+    jobs: int
+
+
+class StatsResponse(BaseModel):
+    """The signed-in user's own job statistics. Averages are null until there is data to average."""
+
+    jobs: StatsJobs
+    # Succeeded / (succeeded + failed); null until a job has finished.
+    success_rate: Optional[float] = None
+    # Submit to finish, for succeeded jobs.
+    average_total_seconds: Optional[float] = None
+    average_critic_score: Optional[float] = None
+    # Share of succeeded jobs the critic approved (of those that report it).
+    approval_rate: Optional[float] = None
+    average_aws_services: Optional[float] = None
+    jobs_last_7_days: int
+    jobs_last_30_days: int
+    first_job_at: Optional[datetime] = None
+    last_job_at: Optional[datetime] = None
+    # The last 14 UTC days, oldest first, with zeros filled in.
+    daily: list[StatsDay]
+    # The averages come from this many succeeded jobs (the newest); capped when there are more.
+    sample_size: int
+    sample_capped: bool

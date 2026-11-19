@@ -17,7 +17,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from api.routes import architectures, auth, llm_settings
+from api.routes import architectures, auth, llm_settings, stats
 from api.schemas import HealthResponse
 from graph.cloudwatch_logs import configure_cloudwatch_logging
 
@@ -45,6 +45,7 @@ app = FastAPI(
 app.include_router(architectures.router)
 app.include_router(auth.router)
 app.include_router(llm_settings.router)
+app.include_router(stats.router)
 
 
 @app.exception_handler(RequestValidationError)
