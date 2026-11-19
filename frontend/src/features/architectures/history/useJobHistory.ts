@@ -12,14 +12,18 @@ export const HISTORY_POLL_MS = 10_000
 const hasUnfinished = (data: JobHistoryResponse | undefined) =>
   Boolean(data?.items.some((item) => item.status === 'queued' || item.status === 'running'))
 
-/** One page of the signed-in user's jobs. The previous page stays on screen while the next loads. */
-export function useJobHistory(params: JobHistoryParams) {
+/**
+ * One page of the signed-in user's jobs. The previous page stays on screen while the next loads.
+ * Polling pauses while the tab is hidden, unless `pollInBackground` is set (the finish alerts need
+ * to notice a job ending while you are in another tab).
+ */
+export function useJobHistory(params: JobHistoryParams, { pollInBackground = false }: { pollInBackground?: boolean } = {}) {
   return useQuery({
     queryKey: [...HISTORY_QUERY_KEY, params],
     queryFn: ({ signal }) => fetchJobHistory(params, signal),
     placeholderData: keepPreviousData,
     refetchInterval: (query) => (hasUnfinished(query.state.data) ? HISTORY_POLL_MS : false),
-    refetchIntervalInBackground: false,
+    refetchIntervalInBackground: pollInBackground,
   })
 }
 

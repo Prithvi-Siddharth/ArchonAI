@@ -8,6 +8,13 @@ export interface ToastOptions {
   tone?: ToastTone
   /** Milliseconds before auto-dismiss; 0 keeps it until closed. Default 5000. */
   duration?: number
+  /** An optional button under the text, e.g. "View results". The toast closes when it is used. */
+  action?: ToastAction
+}
+
+export interface ToastAction {
+  label: string
+  onClick: () => void
 }
 
 export interface ToastItem {
@@ -16,6 +23,7 @@ export interface ToastItem {
   description?: string
   tone: ToastTone
   duration: number
+  action?: ToastAction
 }
 
 const MAX_VISIBLE = 4
@@ -29,9 +37,9 @@ interface ToastState {
 
 export const useToastStore = create<ToastState>()((set) => ({
   toasts: [],
-  show: ({ title, description, tone = 'info', duration = 5000 }) => {
+  show: ({ title, description, tone = 'info', duration = 5000, action }) => {
     const id = `toast-${++nextId}`
-    set((state) => ({ toasts: [...state.toasts, { id, title, description, tone, duration }].slice(-MAX_VISIBLE) }))
+    set((state) => ({ toasts: [...state.toasts, { id, title, description, tone, duration, action }].slice(-MAX_VISIBLE) }))
     return id
   },
   dismiss: (id) => set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) })),

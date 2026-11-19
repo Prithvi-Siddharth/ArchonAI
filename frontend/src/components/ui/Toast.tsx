@@ -38,6 +38,18 @@ function ToastView({ item }: { item: ToastItem }) {
       <div className="min-w-0 flex-1">
         <p className="text-label">{item.title}</p>
         {item.description && <p className="mt-0.5 text-meta text-muted-foreground">{item.description}</p>}
+        {item.action && (
+          <button
+            type="button"
+            onClick={() => {
+              item.action?.onClick()
+              dismiss(item.id)
+            }}
+            className="mt-2 rounded-sm text-meta font-medium text-primary hover:underline"
+          >
+            {item.action.label}
+          </button>
+        )}
       </div>
       <button
         type="button"

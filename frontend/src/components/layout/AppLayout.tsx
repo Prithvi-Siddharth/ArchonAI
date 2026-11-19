@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Outlet, useLocation } from 'react-router'
 
+import { FinishAlerts } from '@/features/notifications/FinishAlerts'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useUIStore } from '@/stores/ui.store'
@@ -35,6 +36,7 @@ export function AppLayout() {
   // jumping to a section scrolls the whole shell out of view.
   return (
     <div className="relative flex h-dvh overflow-hidden">
+      <FinishAlerts />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
