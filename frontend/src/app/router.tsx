@@ -13,6 +13,7 @@ import { RequireAuth } from '@/features/auth/RequireAuth'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { NotFoundPage } from '@/features/not-found/NotFoundPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
+import { WelcomePage } from '@/features/welcome/WelcomePage'
 
 /**
  * Development-only routes, not linked from the navigation. `import.meta.env.DEV`
@@ -38,6 +39,7 @@ const devRoutes: RouteObject[] = import.meta.env.DEV
 
 export const router = createBrowserRouter([
   // Public: the only pages a signed-out visitor can see.
+  { path: '/welcome', element: <WelcomePage /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/register', element: <RegisterPage /> },
   {

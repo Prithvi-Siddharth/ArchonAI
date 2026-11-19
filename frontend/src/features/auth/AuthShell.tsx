@@ -1,5 +1,6 @@
-import { CircleAlert, Eye, EyeOff } from 'lucide-react'
+import { ArrowLeft, CircleAlert, Eye, EyeOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router'
 
 import { Brand } from '@/components/layout/Sidebar'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
@@ -17,6 +18,10 @@ export function AuthShell({ title, description, children, footer }: { title: str
       </header>
       <main className="flex flex-1 justify-center px-4 pt-6 pb-12 sm:items-center sm:pt-0">
         <div className="w-full max-w-sm space-y-4">
+          <Link to="/welcome" className="inline-flex items-center gap-1.5 rounded-sm text-meta text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to welcome
+          </Link>
           <Card className="px-5 py-6 sm:px-6">
             <h1 className="text-page-title">{title}</h1>
             <p className="mt-1 text-muted-foreground">{description}</p>

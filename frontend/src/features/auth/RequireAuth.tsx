@@ -13,7 +13,11 @@ function describe(error: unknown): string {
   return error instanceof ApiError ? error.message : 'Your sign-in could not be checked. Please try again.'
 }
 
-/** Renders the app only for a signed-in user; otherwise sends them to /login and back afterwards. */
+/**
+ * Renders the app only for a signed-in user. A signed-out visitor opening the site itself
+ * (/ or /dashboard) sees the welcome page; one opening a deeper link (a job, a result) goes
+ * to sign in and back to that link afterwards.
+ */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const me = useMe()
   const location = useLocation()
@@ -37,5 +41,5 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     )
   }
   const next = `${location.pathname}${location.search}${location.hash}`
-  return <Navigate to={next === '/' || next === '/dashboard' ? '/login' : `/login?next=${encodeURIComponent(next)}`} replace />
+  return <Navigate to={next === '/' || next === '/dashboard' ? '/welcome' : `/login?next=${encodeURIComponent(next)}`} replace />
 }

@@ -13,6 +13,8 @@ import { createAppQueryClient } from '@/app/providers'
 import { useToastStore } from '@/stores/toast.store'
 import type { User } from '@/types/api'
 
+import { WelcomePage } from '@/features/welcome/WelcomePage'
+
 import { AccountMenu } from './AccountMenu'
 import { LoginPage } from './LoginPage'
 import { RegisterPage } from './RegisterPage'
@@ -86,6 +88,7 @@ function PrivatePage() {
 function renderApp(path: string, client: QueryClient = createAppQueryClient()) {
   const router = createMemoryRouter(
     [
+      { path: '/welcome', element: <WelcomePage /> },
       { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <RegisterPage /> },
       {
@@ -178,6 +181,62 @@ describe('route guard', () => {
     const { router } = renderApp('/private')
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
     expect(where(router)).toBe('/login?next=%2Fprivate')
+  })
+})
+
+describe('welcome page', () => {
+  const HERO = 'Turn your requirements into a reviewed AWS architecture'
+
+  it.each(['/', '/dashboard'])('a signed-out visitor opening %s sees the welcome page first', async (path) => {
+    fakeApi()
+    const { router } = renderApp(path)
+    expect(await screen.findByRole('heading', { level: 1, name: HERO })).toBeTruthy()
+    expect(where(router)).toBe('/welcome')
+    expect(screen.queryByText('Dashboard page')).toBeNull()
+  })
+
+  it('explains the app and offers both ways in', async () => {
+    fakeApi()
+    renderApp('/welcome')
+    await screen.findByRole('heading', { level: 1, name: HERO })
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'Architecture design',
+      'Critic review',
+      'Cost estimate',
+      'Report and trace',
+      'Describe your system',
+      'The agents get to work',
+      'Explore the results',
+    ])
+    const hrefs = (name: string) => screen.getAllByRole('link', { name }).map((a) => a.getAttribute('href'))
+    expect(hrefs('Get started')).toEqual(['/register'])
+    expect(hrefs('Create account')).toEqual(['/register', '/register'])
+    expect(hrefs('Sign in')).toEqual(['/login', '/login', '/login'])
+    expect(document.title).toBe('Welcome · ArchonAI')
+  })
+
+  it('Get started opens registration, and Back to welcome returns', async () => {
+    fakeApi()
+    const { user, router } = renderApp('/welcome')
+    await user.click(await screen.findByRole('link', { name: 'Get started' }))
+    expect(await screen.findByRole('heading', { name: 'Create an account' })).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Back to welcome' }))
+    expect(await screen.findByRole('heading', { level: 1, name: HERO })).toBeTruthy()
+    expect(where(router)).toBe('/welcome')
+  })
+
+  it('the sign-in page links back to welcome too', async () => {
+    fakeApi()
+    renderApp('/login')
+    expect((await screen.findByRole('link', { name: 'Back to welcome' })).getAttribute('href')).toBe('/welcome')
+  })
+
+  it('a signed-in user opening /welcome goes straight to the dashboard', async () => {
+    const api = fakeApi()
+    api.signedIn = ADA
+    const { router } = renderApp('/welcome')
+    expect(await screen.findByText('Dashboard page')).toBeTruthy()
+    expect(where(router)).toBe('/dashboard')
   })
 })
 
