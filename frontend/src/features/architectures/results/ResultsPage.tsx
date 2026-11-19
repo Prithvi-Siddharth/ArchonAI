@@ -19,6 +19,7 @@ import { downloadJson } from '@/utils/download'
 import { shortId } from '@/utils/format'
 
 import { useJob } from '../useJob'
+import { DownloadPdfButton } from './pdf/DownloadPdfButton'
 import { AnalysesTab } from './analyses/AnalysesTab'
 import { ArchitectureTab } from './architecture/ArchitectureTab'
 import { CostTab } from './cost/CostTab'
@@ -206,6 +207,7 @@ export function ResultsPage() {
                 Download JSON
               </Button>
             )}
+            {result && job && <DownloadPdfButton result={result} job={job} />}
           </>
         }
       />

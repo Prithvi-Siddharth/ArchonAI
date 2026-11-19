@@ -69,6 +69,7 @@ describe('ResultsPage states', () => {
     expect(screen.getByRole('link', { name: action }).getAttribute('href')).toBe('/architectures/job-1')
     expect(screen.queryByRole('tablist')).toBeNull()
     expect(screen.queryByRole('button', { name: /Download JSON/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Download PDF/ })).toBeNull()
   })
 
   it('shows the safe error of a failed job', async () => {
@@ -89,6 +90,9 @@ describe('ResultsPage with a result', () => {
     expect(screen.queryByText('Revision limit reached')).toBeNull()
     expect(screen.getByRole('link', { name: /Back to job/ }).getAttribute('href')).toBe('/architectures/job-1')
     expect(screen.getByRole('button', { name: /Download JSON/ })).toBeTruthy()
+    // The PDF export sits right after the JSON one.
+    const jsonButton = screen.getByRole('button', { name: /Download JSON/ })
+    expect(jsonButton.nextElementSibling?.textContent).toBe('Download PDF')
 
     const cards = Object.fromEntries(
       screen.getAllByRole('term').map((dt) => [dt.textContent, [...dt.parentElement!.querySelectorAll('dd')].map((d) => d.textContent)]),
